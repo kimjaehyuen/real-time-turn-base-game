@@ -6,7 +6,8 @@ import { dmgDealtMult, dmgTakenMult, effectiveAtk, effectiveDef, effectiveSpd } 
 export const GAUGE_MAX = 400;
 /** 피격 시 얻는 필살기 에너지 (선딜 없이 피격만으로도 필살기가 채워지도록) */
 const HIT_ENERGY_GAIN = 8;
-/** 적 AI가 "생각하는" 시간 범위(ms) — 즉시 처리되지 않고 눈에 보이도록 하기 위함 */
+/** 적 AI가 "생각하는" 시간 범위(ms) — 준비되자마자 즉시 처리되지 않고 눈에 보이도록 하기 위함.
+ *  각 캐릭터마다 독립적으로 부여되므로, 나중에 준비된 캐릭터가 먼저 행동할 수도 있다. */
 const ENEMY_THINK_MS_MIN = 450;
 const ENEMY_THINK_MS_MAX = 950;
 
@@ -23,15 +24,18 @@ let logSeq = 0;
 
 export class BattleEngine implements BattleApi {
   characters: Character[] = [];
-  readyQueue: string[] = [];
-  activeId: string | null = null;
+  /** 게이지가 가득 차 "턴이 활성화된" 캐릭터들. 순서는 단순 참고용일 뿐, 행동 순서를 강제하지 않는다 —
+   *  나중에 활성화된 캐릭터가 먼저 활성화된 캐릭터보다 먼저 행동할 수 있다 (아래 update() 참고). */
+  readyIds: string[] = [];
   status: BattleStatus = 'ongoing';
   logs: LogEntry[] = [];
   battleTimeMs = 0;
   paused = false;
   timeScale = 1;
 
-  private enemyThinkMs = 0;
+  /** 준비된 적 캐릭터마다 독립적으로 흐르는 "생각 시간". 캐릭터별로 따로 카운트되므로
+   *  먼저 준비된 적이라도 이 타이머가 늦게 끝나면 나중에 준비된 적에게 행동 순서를 내줄 수 있다. */
+  private enemyThinkTimers = new Map<string, number>();
 
   constructor() {
     this.reset();
@@ -39,12 +43,11 @@ export class BattleEngine implements BattleApi {
 
   reset(): void {
     this.characters = createInitialRoster();
-    this.readyQueue = [];
-    this.activeId = null;
+    this.readyIds = [];
     this.status = 'ongoing';
     this.logs = [];
     this.battleTimeMs = 0;
-    this.enemyThinkMs = 0;
+    this.enemyThinkTimers.clear();
     this.log('전투 시작!', 'info');
   }
 
@@ -61,8 +64,17 @@ export class BattleEngine implements BattleApi {
     return this.characters.find((c) => c.id === id);
   }
 
+  isReady(id: string): boolean {
+    return this.readyIds.includes(id);
+  }
+
   // -------------------------------------------------------------------------
   // 메인 루프: 매 프레임 호출된다 (real dt를 ms 단위로 전달)
+  //
+  // 턴은 "활성화된다고 해서 다른 캐릭터를 멈추지 않는다": 게이지가 다 찬 캐릭터는 모두
+  // 동시에 readyIds에 들어가 각자 독립적으로 행동 기회를 얻는다. 즉 A가 먼저 활성화되어
+  // 있어도, 그 이후에 B가 활성화되면 B가 A보다 먼저 행동할 수도 있다 — 실제 행동 순서는
+  // (플레이어의 입력 타이밍 / 적 AI의 개별 사고 시간)에 따라 그때그때 결정된다.
   // -------------------------------------------------------------------------
   update(realDtMs: number): void {
     if (this.status !== 'ongoing') return;
@@ -75,29 +87,20 @@ export class BattleEngine implements BattleApi {
 
     this.chargeGauges(dt);
 
-    if (!this.activeId && this.readyQueue.length > 0) {
-      const nextId = this.readyQueue.shift()!;
-      const next = this.findById(nextId);
-      if (next && next.alive) {
-        this.activeId = nextId;
-        this.log(`— ${next.name}의 턴 —`, 'action');
-        if (next.team === 'enemy') {
-          this.enemyThinkMs = ENEMY_THINK_MS_MIN + Math.random() * (ENEMY_THINK_MS_MAX - ENEMY_THINK_MS_MIN);
-        }
+    // 준비된 적들은 각자 독립적인 타이머로 행동한다 (하나가 끝나기를 기다리지 않는다).
+    for (const id of [...this.readyIds]) {
+      const actor = this.findById(id);
+      if (!actor || !actor.alive || actor.team !== 'enemy') continue;
+      const remaining = (this.enemyThinkTimers.get(id) ?? 0) - dt;
+      if (remaining <= 0) {
+        this.enemyThinkTimers.delete(id);
+        this.runEnemyAI(actor);
+      } else {
+        this.enemyThinkTimers.set(id, remaining);
       }
     }
 
-    if (this.activeId) {
-      const active = this.findById(this.activeId);
-      if (active && active.team === 'enemy' && active.alive) {
-        this.enemyThinkMs -= dt;
-        if (this.enemyThinkMs <= 0) {
-          this.runEnemyAI(active);
-        }
-      }
-    }
-
-    // 필살기는 게이지/대기열과 무관하게, 자신의 턴이 아니어도 에너지가 차면 즉시 사용 가능.
+    // 필살기는 게이지/준비 상태와 무관하게, 자신의 턴이 아니어도 에너지가 차면 즉시 사용 가능.
     // (플레이어 캐릭터는 UI 버튼으로 직접 트리거하고, 적은 자동으로 즉시 사용한다)
     for (const c of this.characters) {
       if (c.alive && c.team === 'enemy' && c.energy >= c.maxEnergy) {
@@ -137,23 +140,26 @@ export class BattleEngine implements BattleApi {
   private chargeGauges(dt: number): void {
     for (const c of this.characters) {
       if (!c.alive) continue;
-      if (c.id === this.activeId) continue;
-      if (this.readyQueue.includes(c.id)) continue;
+      if (this.readyIds.includes(c.id)) continue;
       c.gauge += (effectiveSpd(c) * dt) / 1000;
       if (c.gauge >= GAUGE_MAX) {
         c.gauge = GAUGE_MAX;
-        this.readyQueue.push(c.id);
+        this.readyIds.push(c.id);
         this.log(`${c.name}의 턴이 활성화되었습니다.`, 'ready');
+        if (c.team === 'enemy') {
+          this.enemyThinkTimers.set(c.id, ENEMY_THINK_MS_MIN + Math.random() * (ENEMY_THINK_MS_MAX - ENEMY_THINK_MS_MIN));
+        }
       }
     }
   }
 
   // -------------------------------------------------------------------------
-  // 행동 실행 (일반 공격 / 스킬) — 반드시 "현재 활성화된 턴"의 캐릭터만 사용 가능
+  // 행동 실행 (일반 공격 / 스킬) — "턴이 활성화된(준비된)" 캐릭터라면 누구든, 언제든 사용 가능.
+  // 다른 캐릭터가 먼저 준비되어 있었는지는 상관없다.
   // -------------------------------------------------------------------------
   performAction(actorId: string, key: 'normal' | 'skill', targetId?: string): boolean {
     if (this.status !== 'ongoing') return false;
-    if (this.activeId !== actorId) return false;
+    if (!this.readyIds.includes(actorId)) return false;
     const actor = this.findById(actorId);
     if (!actor || !actor.alive) return false;
 
@@ -179,12 +185,13 @@ export class BattleEngine implements BattleApi {
       }
     }
     actor.gauge = 0;
-    if (this.activeId === actor.id) this.activeId = null;
+    this.readyIds = this.readyIds.filter((id) => id !== actor.id);
+    this.enemyThinkTimers.delete(actor.id);
     this.checkBattleEnd();
   }
 
   // -------------------------------------------------------------------------
-  // 필살기: 게이지/대기열/활성 턴과 완전히 무관하게, 에너지가 차면 언제든 즉시 발동.
+  // 필살기: 게이지/준비 상태와 완전히 무관하게, 에너지가 차면 언제든 즉시 발동.
   // 다른 캐릭터의 진행 중인 턴을 가로채거나 멈추지 않는다.
   // -------------------------------------------------------------------------
   performUltimate(actorId: string, targetId?: string): boolean {
@@ -267,14 +274,14 @@ export class BattleEngine implements BattleApi {
 
   // -------------------------------------------------------------------------
   // 턴 순서 미리보기 (속도 기반 예측, 실제 상태를 변경하지 않는 시뮬레이션)
+  // 참고: 이미 준비된 캐릭터들 사이의 실제 행동 순서는 강제되지 않으므로,
+  // 이 목록은 "누가 먼저 준비되는지"에 대한 참고용 예측일 뿐이다.
   // -------------------------------------------------------------------------
   getTurnOrderPreview(count = 8): Character[] {
     const living = this.characters.filter((c) => c.alive);
     if (!living.length) return [];
 
-    const order: string[] = [];
-    if (this.activeId) order.push(this.activeId);
-    order.push(...this.readyQueue);
+    const order: string[] = [...this.readyIds];
 
     const sim = new Map(living.map((c) => [c.id, { gauge: c.gauge, spd: effectiveSpd(c) }]));
     for (const id of order) {
@@ -342,8 +349,8 @@ export class BattleEngine implements BattleApi {
       target.gauge = 0;
       target.statuses = [];
       this.log(`${target.name} 전투불능!`, 'defeat');
-      this.readyQueue = this.readyQueue.filter((id) => id !== target.id);
-      if (this.activeId === target.id) this.activeId = null;
+      this.readyIds = this.readyIds.filter((id) => id !== target.id);
+      this.enemyThinkTimers.delete(target.id);
     }
     this.checkBattleEnd();
   }

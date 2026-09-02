@@ -92,14 +92,12 @@ export function clearCardCache(): void {
 }
 
 function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null): string {
-  const qIdx = engine.readyQueue.indexOf(c.id);
   const targetable = !!pending && isValidTarget(engine, pending, c);
   const ultReady = c.energy >= c.maxEnergy;
   const statusSig = c.statuses.map((s) => s.id).join(',');
   return [
     c.alive ? 'a' : 'd',
-    engine.activeId === c.id ? 'active' : 'idle',
-    qIdx,
+    engine.isReady(c.id) ? 'ready' : 'idle',
     targetable ? 'targetable' : '',
     ultReady ? 'ultready' : '',
     statusSig,
@@ -118,7 +116,7 @@ function buildBar(label: string, kind: string): { wrap: HTMLElement; fill: HTMLE
 }
 
 function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | null, handlers: UiHandlers): CardHandle {
-  const classes = ['char-card', `team-${c.team}`, c.alive ? '' : 'dead', engine.activeId === c.id ? 'active-turn' : '']
+  const classes = ['char-card', `team-${c.team}`, c.alive ? '' : 'dead', engine.isReady(c.id) ? 'active-turn' : '']
     .filter(Boolean)
     .join(' ');
   const root = el('div', classes);
@@ -137,11 +135,8 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
   head.appendChild(nameCol);
   root.appendChild(head);
 
-  const qIdx = engine.readyQueue.indexOf(c.id);
-  if (engine.activeId === c.id) {
-    root.appendChild(el('div', 'turn-badge active', c.team === 'player' ? '내 턴 — 행동 선택' : '적 턴 진행 중'));
-  } else if (qIdx >= 0) {
-    root.appendChild(el('div', 'turn-badge waiting', `대기열 ${qIdx + 1}번째`));
+  if (engine.isReady(c.id)) {
+    root.appendChild(el('div', 'turn-badge active', c.team === 'player' ? '내 턴 — 행동 선택' : '공격 준비 중'));
   }
 
   const hp = buildBar('HP', 'hp');
@@ -204,8 +199,7 @@ function updateCardDynamics(engine: BattleEngine, c: Character, handle: CardHand
   handle.hpLabel.textContent = `HP · ${Math.max(0, Math.round(c.hp))} / ${c.maxHp}`;
 
   const gaugePct = Math.max(0, Math.min(100, (c.gauge / GAUGE_MAX) * 100));
-  const qIdx = engine.readyQueue.indexOf(c.id);
-  const gaugeText = engine.activeId === c.id ? '행동 중' : qIdx >= 0 ? '대기 중' : '충전 중';
+  const gaugeText = engine.isReady(c.id) ? '행동 대기' : '충전 중';
   handle.atbFill.style.width = `${gaugePct}%`;
   handle.atbLabel.textContent = `ATB · ${gaugeText}`;
 
@@ -255,15 +249,17 @@ function renderParty(engine: BattleEngine, team: 'player' | 'enemy', pending: Pe
 }
 
 // ---------------------------------------------------------------------------
-// 하단 액션 패널: 활성 턴인 "플레이어" 캐릭터의 일반공격/스킬 선택
+// 하단 액션 패널: 턴이 활성화된 "플레이어" 캐릭터 전원의 일반공격/스킬 선택.
+// 동시에 여러 명이 준비될 수 있으므로, 준비된 순서와 무관하게 원하는 캐릭터부터
+// 먼저 행동시킬 수 있다 (적도 마찬가지로 각자 독립적인 타이밍에 따로 행동한다).
 // (필살기는 각 캐릭터 카드의 버튼으로 언제든 별도 사용 — 여기 포함되지 않음)
 // 상태가 바뀔 때만 다시 그린다.
 // ---------------------------------------------------------------------------
 let lastPanelSignature = '';
 
 function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, handlers: UiHandlers): void {
-  const active = engine.findById(engine.activeId ?? undefined);
-  const signature = `${engine.status}|${active?.id ?? ''}|${active?.team ?? ''}|${pending ? `${pending.actorId}:${pending.key}` : ''}`;
+  const readyPlayers = engine.characters.filter((c) => c.team === 'player' && c.alive && engine.isReady(c.id));
+  const signature = `${engine.status}|${readyPlayers.map((c) => c.id).join(',')}|${pending ? `${pending.actorId}:${pending.key}` : ''}`;
   if (signature === lastPanelSignature) return;
   lastPanelSignature = signature;
 
@@ -276,44 +272,41 @@ function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, 
     return;
   }
 
-  if (!active || active.team !== 'player') {
-    panel.appendChild(
-      el(
-        'div',
-        'hint',
-        active ? `${active.name}(적)의 턴이 진행되고 있습니다...` : '캐릭터의 턴이 활성화되면 여기에서 행동을 선택할 수 있습니다.',
-      ),
-    );
+  if (!readyPlayers.length) {
+    panel.appendChild(el('div', 'hint', '캐릭터의 턴이 활성화되면 여기에서 행동을 선택할 수 있습니다.'));
     container.innerHTML = '';
     container.appendChild(panel);
     return;
   }
 
-  if (pending && pending.actorId === active.id) {
-    const kindLabel = pending.key === 'skill' ? '스킬' : pending.key === 'ultimate' ? '필살기' : '일반 공격';
-    panel.appendChild(el('div', 'hint', `${kindLabel} 대상을 선택하세요 (강조된 대상을 클릭)`));
-    const cancelBtn = el('button', 'ctrl-btn cancel', '취소');
-    cancelBtn.addEventListener('click', () => handlers.onCancelPending());
-    panel.appendChild(cancelBtn);
-    container.innerHTML = '';
-    container.appendChild(panel);
-    return;
+  const list = el('div', 'ready-actor-list');
+  for (const actor of readyPlayers) {
+    const row = el('div', 'ready-actor-row');
+    row.appendChild(el('div', 'ready-actor-name', `${actor.portrait} ${actor.name}`));
+
+    if (pending && pending.actorId === actor.id) {
+      const kindLabel = pending.key === 'skill' ? '스킬' : pending.key === 'ultimate' ? '필살기' : '일반 공격';
+      row.appendChild(el('div', 'hint', `${kindLabel} 대상을 선택하세요 (강조된 대상을 클릭)`));
+      const cancelBtn = el('button', 'ctrl-btn cancel', '취소');
+      cancelBtn.addEventListener('click', () => handlers.onCancelPending());
+      row.appendChild(cancelBtn);
+    } else {
+      const btnRow = el('div', 'action-buttons');
+      const normalBtn = el('button', 'action-btn', actor.skills.normal.name);
+      normalBtn.title = actor.skills.normal.description;
+      normalBtn.addEventListener('click', () => handlers.onChooseAction(actor.id, 'normal'));
+
+      const skillBtn = el('button', 'action-btn skill', actor.skills.skill.name);
+      skillBtn.title = actor.skills.skill.description;
+      skillBtn.addEventListener('click', () => handlers.onChooseAction(actor.id, 'skill'));
+
+      btnRow.appendChild(normalBtn);
+      btnRow.appendChild(skillBtn);
+      row.appendChild(btnRow);
+    }
+    list.appendChild(row);
   }
-
-  panel.appendChild(el('div', 'hint', `${active.name}의 턴입니다 — 행동을 선택하세요`));
-  const row = el('div', 'action-buttons');
-
-  const normalBtn = el('button', 'action-btn', active.skills.normal.name);
-  normalBtn.title = active.skills.normal.description;
-  normalBtn.addEventListener('click', () => handlers.onChooseAction(active.id, 'normal'));
-
-  const skillBtn = el('button', 'action-btn skill', active.skills.skill.name);
-  skillBtn.title = active.skills.skill.description;
-  skillBtn.addEventListener('click', () => handlers.onChooseAction(active.id, 'skill'));
-
-  row.appendChild(normalBtn);
-  row.appendChild(skillBtn);
-  panel.appendChild(row);
+  panel.appendChild(list);
   container.innerHTML = '';
   container.appendChild(panel);
 }
