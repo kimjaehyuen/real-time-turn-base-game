@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>실시간 턴제 전투 데모</title>
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <h1>⚔️ 실시간 턴제 전투 데모</h1>
+        <div class="controls">
+          <button id="btn-pause" class="ctrl-btn">일시정지</button>
+          <div class="speed-group" id="speed-group">
+            <button class="ctrl-btn speed-btn active" data-speed="1">x1</button>
+            <button class="ctrl-btn speed-btn" data-speed="2">x2</button>
+            <button class="ctrl-btn speed-btn" data-speed="4">x4</button>
+          </div>
+          <button id="btn-reset" class="ctrl-btn reset">전투 재시작</button>
+        </div>
+      </header>
+
+      <section class="turn-order" id="turn-order"></section>
+
+      <div class="layout">
+        <main class="battlefield">
+          <div class="party enemy-party" id="enemy-party"></div>
+          <div class="vs-divider">VS</div>
+          <div class="party player-party" id="player-party"></div>
+
+          <div class="action-panel" id="action-panel"></div>
+        </main>
+
+        <aside class="battle-log-panel">
+          <h2>전투 로그</h2>
+          <div class="log-list" id="log-list"></div>
+        </aside>
+      </div>
+    </div>
+
+    <div class="overlay" id="overlay" hidden>
+      <div class="overlay-box">
+        <div class="overlay-title" id="overlay-title"></div>
+        <button class="ctrl-btn reset" id="overlay-reset">다시 시작</button>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
