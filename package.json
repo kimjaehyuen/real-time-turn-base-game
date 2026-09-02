@@ -11,9 +11,9 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron:dev": "concurrently -k -s first \"npm:dev\" \"wait-on tcp:5173 && electron .\"",
-    "dist:win": "npm run build && electron-builder --win",
-    "dist:mac": "npm run build && electron-builder --mac",
-    "dist:linux": "npm run build && electron-builder --linux"
+    "dist:win": "npm run build && electron-builder --win --publish never",
+    "dist:mac": "npm run build && electron-builder --mac --publish never",
+    "dist:linux": "npm run build && electron-builder --linux --publish never"
   },
   "devDependencies": {
     "concurrently": "^10.0.5",

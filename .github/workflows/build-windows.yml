@@ -21,8 +21,10 @@ jobs:
       - run: npm run dist:win
 
       - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
         with:
           name: TurnBattleDemo-windows
           path: |
             release/*.exe
           retention-days: 14
+          if-no-files-found: error
