@@ -11,6 +11,31 @@ npm run dev
 
 브라우저에서 안내되는 로컬 주소로 접속하면 됩니다. `npm run build`로 정적 빌드도 가능합니다.
 
+## 데스크톱 실행파일(.exe)로 빌드하기
+
+Electron으로 감싸서 Windows용 실행파일을 만들 수 있습니다.
+
+**방법 A: GitHub Actions에서 빌드 (Windows PC가 없어도 됨, 권장)**
+
+이 저장소의 GitHub → Actions 탭에서 **"Build Windows executable"** 워크플로를 수동 실행(`Run workflow`)하면,
+실제 Windows 러너에서 빌드한 뒤 완료된 실행파일을 워크플로 실행 결과의 Artifacts에서 zip으로 내려받을 수 있습니다.
+(`v`로 시작하는 태그를 푸시해도 자동으로 실행됩니다.)
+
+**방법 B: 로컬 Windows PC에서 직접 빌드**
+
+```bash
+npm install
+npm run dist:win
+```
+
+`release/` 폴더에 설치형 실행파일(`TurnBattleDemo Setup x.x.x.exe`)과 별도 설치 없이 바로 실행되는
+포터블 실행파일이 생성됩니다. (서명이 되어있지 않아 Windows SmartScreen 경고가 뜰 수 있는데, "추가 정보 → 실행"으로 진행하면 됩니다.)
+
+> 참고: `dist:win`은 Windows용 빌드 도구(NSIS 등)를 사용하므로 macOS/Linux에서 실행하려면 별도로 `wine`이 설치돼 있어야 합니다.
+> Windows PC에서 직접 실행하거나, 위 방법 A(GitHub Actions)를 사용하는 쪽이 훨씬 간단합니다.
+
+개발 중 Electron 창으로 미리 보고 싶다면(핫리로드 포함): `npm run electron:dev`
+
 ## 핵심 규칙과 구현 위치
 
 1. **턴이 활성화되어도 다른 캐릭터의 진행이 멈추지 않는다.**
@@ -48,6 +73,10 @@ src/
     render.ts           DOM 렌더링 (구조 변경과 수치 갱신을 분리해 매 프레임 버튼이 재생성되지 않도록 함)
   main.ts               게임 루프(rAF) + 이벤트 연결
   style.css
+electron/
+  main.cjs               Electron 메인 프로세스 (개발 중엔 vite dev 서버, 빌드 후엔 dist/index.html 로드)
+.github/workflows/
+  build-windows.yml       GitHub Actions에서 Windows 실행파일을 빌드하는 워크플로
 ```
 
 ## 조작
