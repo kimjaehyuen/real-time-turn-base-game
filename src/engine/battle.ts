@@ -1,5 +1,5 @@
 import type { BattleApi, Character, StatusEffect, StatusTemplate, TargetType } from './types';
-import { createInitialRoster } from './characters';
+import { createBattleRoster } from './characters';
 import { dmgDealtMult, dmgTakenMult, effectiveAtk, effectiveDef, effectiveSpd } from './statusEffects';
 
 /** 이 값만큼 게이지가 차면 턴이 "활성화"된다. spd=100 기준 4초. */
@@ -39,12 +39,9 @@ export class BattleEngine implements BattleApi {
   /** 대상 선택 중에는 true — 모든 게이지 충전과 적의 행동 진행이 멈춘다 (필살기는 예외). */
   private targetSelectionPaused = false;
 
-  constructor() {
-    this.reset();
-  }
-
-  reset(): void {
-    this.characters = createInitialRoster();
+  /** 파티 편성 화면에서 선택된 아군 키 목록으로 전투를 (재)시작한다. */
+  reset(selectedPlayerKeys: string[]): void {
+    this.characters = createBattleRoster(selectedPlayerKeys);
     this.readyIds = [];
     this.status = 'ongoing';
     this.battleTimeMs = 0;
@@ -92,12 +89,11 @@ export class BattleEngine implements BattleApi {
     if (dt <= 0) return;
     this.battleTimeMs += dt;
 
-    // 시간 기반 상태이상(화상/중독/재생 등)은 대상 선택 중에도 턴과 무관하게 계속 흐른다 (규칙 5).
-    this.tickTimeBasedStatuses(dt);
-    if (this.status !== 'ongoing') return;
-
-    // 대상 선택 중에는 모든 캐릭터의 행동 게이지 충전과 적의 행동 진행이 멈춘다.
+    // 대상 선택 중에는 게이지 충전/적 행동뿐 아니라 턴/시간 기반 버프·디버프의 지속시간도 함께 멈춘다.
     if (!this.targetSelectionPaused) {
+      this.tickTimeBasedStatuses(dt);
+      if (this.status !== 'ongoing') return;
+
       this.chargeGauges(dt);
 
       // 준비된 적들은 각자 독립적인 타이머로 행동한다 (하나가 끝나기를 기다리지 않는다).
@@ -305,48 +301,6 @@ export class BattleEngine implements BattleApi {
     const pool = targetType === 'singleEnemy' ? this.livingEnemies(actor) : this.livingAllies(actor);
     if (!pool.length) return undefined;
     return pool.reduce((a, b) => (a.hp / a.maxHp <= b.hp / b.maxHp ? a : b)).id;
-  }
-
-  // -------------------------------------------------------------------------
-  // 턴 순서 미리보기 (속도 기반 예측, 실제 상태를 변경하지 않는 시뮬레이션)
-  // 참고: 이미 준비된 캐릭터들 사이의 실제 행동 순서는 강제되지 않으므로,
-  // 이 목록은 "누가 먼저 준비되는지"에 대한 참고용 예측일 뿐이다.
-  // -------------------------------------------------------------------------
-  getTurnOrderPreview(count = 8): Character[] {
-    const living = this.characters.filter((c) => c.alive);
-    if (!living.length) return [];
-
-    const order: string[] = [...this.readyIds];
-
-    const sim = new Map(living.map((c) => [c.id, { gauge: c.gauge, spd: effectiveSpd(c) }]));
-    for (const id of order) {
-      const s = sim.get(id);
-      if (s) s.gauge = 0;
-    }
-
-    while (order.length < count) {
-      let bestId: string | null = null;
-      let bestTime = Infinity;
-      for (const c of living) {
-        const s = sim.get(c.id)!;
-        const t = (GAUGE_MAX - s.gauge) / s.spd;
-        if (t < bestTime) {
-          bestTime = t;
-          bestId = c.id;
-        }
-      }
-      if (!bestId) break;
-      order.push(bestId);
-      for (const c of living) {
-        sim.get(c.id)!.gauge += sim.get(c.id)!.spd * bestTime;
-      }
-      sim.get(bestId)!.gauge = 0;
-    }
-
-    return order
-      .slice(0, count)
-      .map((id) => this.findById(id))
-      .filter((c): c is Character => !!c);
   }
 
   // -------------------------------------------------------------------------

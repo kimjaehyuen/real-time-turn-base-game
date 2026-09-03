@@ -45,38 +45,18 @@ export function syncControls(engine: BattleEngine): void {
 }
 
 // ---------------------------------------------------------------------------
-// 턴 순서 미리보기 — 상호작용이 없는 순수 표시용이라 매 프레임 새로 그려도 무방
-// ---------------------------------------------------------------------------
-function renderTurnOrder(engine: BattleEngine): void {
-  const container = byId('turn-order');
-  const wrap = el('div', 'turn-order-inner');
-  wrap.appendChild(el('span', 'turn-order-label', '다음 턴 순서'));
-
-  const list = engine.getTurnOrderPreview(8);
-  list.forEach((c, i) => {
-    const chip = el('div', `turn-chip team-${c.team}${i === 0 ? ' first' : ''}${!c.alive ? ' dead' : ''}`);
-    chip.textContent = c.portrait;
-    chip.title = c.name;
-    wrap.appendChild(chip);
-    if (i < list.length - 1) wrap.appendChild(el('span', 'turn-arrow', '›'));
-  });
-
-  container.innerHTML = '';
-  container.appendChild(wrap);
-}
-
-// ---------------------------------------------------------------------------
-// 좌/우상단 피해량 표시 — 아군/적이 새 행동을 시작할 때마다 각각 리셋된다 (engine이 관리).
+// 좌하단(적 -> 아군) / 우상단(아군 -> 적) 피해량 표시 — 숫자만 표시하며,
+// 그 편이 새 행동을 시작할 때마다 각각 리셋된다 (engine이 관리).
 // ---------------------------------------------------------------------------
 function renderDamageIndicators(engine: BattleEngine): void {
   const right = byId('dmg-right'); // 아군 -> 적
   const left = byId('dmg-left'); // 적 -> 아군
 
   right.hidden = engine.lastPlayerDamage <= 0;
-  right.textContent = engine.lastPlayerDamage > 0 ? `적에게 ${engine.lastPlayerDamage} 피해` : '';
+  right.textContent = engine.lastPlayerDamage > 0 ? String(engine.lastPlayerDamage) : '';
 
   left.hidden = engine.lastEnemyDamage <= 0;
-  left.textContent = engine.lastEnemyDamage > 0 ? `아군이 ${engine.lastEnemyDamage} 피해` : '';
+  left.textContent = engine.lastEnemyDamage > 0 ? String(engine.lastEnemyDamage) : '';
 }
 
 // ---------------------------------------------------------------------------
@@ -105,7 +85,7 @@ export function clearCardCache(): void {
   cardCache.clear();
 }
 
-function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null): string {
+function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null, selectedActorId: string | null): string {
   const targetable = !!pending && isValidTarget(engine, pending, c);
   const ultReady = c.energy >= c.maxEnergy;
   const statusSig = c.statuses.map((s) => s.id).join(',');
@@ -114,6 +94,7 @@ function cardSignature(engine: BattleEngine, c: Character, pending: PendingActio
     engine.isReady(c.id) ? 'ready' : 'idle',
     targetable ? 'targetable' : '',
     ultReady ? 'ultready' : '',
+    c.id === selectedActorId ? 'selected' : '',
     statusSig,
   ].join('|');
 }
@@ -129,16 +110,34 @@ function buildBar(label: string, kind: string): { wrap: HTMLElement; fill: HTMLE
   return { wrap, fill, labelEl };
 }
 
-function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | null, handlers: UiHandlers): CardHandle {
-  const classes = ['char-card', `team-${c.team}`, c.alive ? '' : 'dead', engine.isReady(c.id) ? 'active-turn' : '']
+function buildCard(
+  engine: BattleEngine,
+  c: Character,
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+): CardHandle {
+  const isSelected = c.id === selectedActorId;
+  const classes = [
+    'char-card',
+    `team-${c.team}`,
+    c.alive ? '' : 'dead',
+    engine.isReady(c.id) ? 'active-turn' : '',
+    isSelected ? 'selected-for-action' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   const root = el('div', classes);
 
   const targetable = !!pending && isValidTarget(engine, pending, c);
   if (targetable) {
+    // 대상 선택 중에는 카드 클릭이 항상 "대상 지정"이다.
     root.classList.add('targetable');
     root.addEventListener('click', () => handlers.onChooseTarget(c.id));
+  } else if (!pending && c.team === 'player' && c.alive && engine.isReady(c.id)) {
+    // 평소에는 준비된 아군 카드를 클릭해 "행동할 캐릭터"로 선택한다 (다시 클릭하면 선택 해제).
+    root.classList.add('selectable');
+    root.addEventListener('click', () => handlers.onSelectActor(c.id));
   }
 
   if (c.team === 'player') {
@@ -160,7 +159,9 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
   root.appendChild(head);
 
   if (engine.isReady(c.id)) {
-    root.appendChild(el('div', 'turn-badge active', c.team === 'player' ? '내 턴 — 행동 선택' : '공격 준비 중'));
+    const label =
+      c.team === 'player' ? (isSelected ? '선택됨 — Q 일반공격 / E 스킬' : '내 턴 — 클릭해서 선택') : '공격 준비 중';
+    root.appendChild(el('div', 'turn-badge active', label));
   }
 
   const hp = buildBar('HP', 'hp');
@@ -204,7 +205,7 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
 
   return {
     root,
-    signature: cardSignature(engine, c, pending),
+    signature: cardSignature(engine, c, pending, selectedActorId),
     hpFill: hp.fill,
     hpLabel: hp.labelEl,
     atbFill: atb.fill,
@@ -252,16 +253,22 @@ function updateCardDynamics(engine: BattleEngine, c: Character, handle: CardHand
   }
 }
 
-function renderParty(engine: BattleEngine, team: 'player' | 'enemy', pending: PendingAction | null, handlers: UiHandlers): void {
+function renderParty(
+  engine: BattleEngine,
+  team: 'player' | 'enemy',
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+): void {
   const container = byId(team === 'player' ? 'player-party' : 'enemy-party');
   const members = engine.characters.filter((c) => c.team === team);
 
   const frag = document.createDocumentFragment();
   for (const c of members) {
-    const sig = cardSignature(engine, c, pending);
+    const sig = cardSignature(engine, c, pending, selectedActorId);
     let handle = cardCache.get(c.id);
     if (!handle || handle.signature !== sig) {
-      handle = buildCard(engine, c, pending, handlers);
+      handle = buildCard(engine, c, pending, selectedActorId, handlers);
       cardCache.set(c.id, handle);
     }
     updateCardDynamics(engine, c, handle);
@@ -294,17 +301,17 @@ function renderSpBar(engine: BattleEngine): void {
 }
 
 // ---------------------------------------------------------------------------
-// 하단 액션 패널: 턴이 활성화된 "플레이어" 캐릭터 전원의 일반공격/스킬 선택 (전부 마우스 클릭).
-// 동시에 여러 명이 준비될 수 있으므로, 준비된 순서와 무관하게 원하는 캐릭터부터
-// 먼저 행동시킬 수 있다 (적도 마찬가지로 각자 독립적인 타이밍에 따로 행동한다).
+// 하단 액션 패널: 클릭으로 선택된 "그 한 캐릭터"의 일반공격(Q)/스킬(E) 선택.
+// 준비된 캐릭터가 여럿이어도 한 번에 한 명만 선택되며, 다른 준비된 카드를 클릭하면
+// 선택이 바뀐다 (적은 각자 독립적인 타이밍에 따로 행동한다).
 // (필살기는 각 캐릭터 카드의 버튼 — 또는 키보드 1~4 — 로 언제든 별도 사용, 여기 포함되지 않음)
 // 상태가 바뀔 때만 다시 그린다.
 // ---------------------------------------------------------------------------
 let lastPanelSignature = '';
 
-function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, handlers: UiHandlers): void {
-  const readyPlayers = engine.characters.filter((c) => c.team === 'player' && c.alive && engine.isReady(c.id));
-  const signature = `${engine.status}|${readyPlayers.map((c) => c.id).join(',')}|${pending ? `${pending.actorId}:${pending.key}` : ''}|sp${engine.sp}`;
+function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, selectedActorId: string | null, handlers: UiHandlers): void {
+  const selected = selectedActorId ? engine.findById(selectedActorId) : undefined;
+  const signature = `${engine.status}|${selected?.id ?? ''}|${pending ? `${pending.actorId}:${pending.key}` : ''}|sp${engine.sp}`;
   if (signature === lastPanelSignature) return;
   lastPanelSignature = signature;
 
@@ -317,44 +324,44 @@ function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, 
     return;
   }
 
-  if (!readyPlayers.length) {
-    panel.appendChild(el('div', 'hint', '캐릭터의 턴이 활성화되면 여기에서 행동을 선택할 수 있습니다.'));
+  if (!selected || !selected.alive || !engine.isReady(selected.id)) {
+    panel.appendChild(el('div', 'hint', '턴이 활성화된 아군 카드를 클릭해 선택하세요.'));
     container.innerHTML = '';
     container.appendChild(panel);
     return;
   }
 
-  const list = el('div', 'ready-actor-list');
-  for (const actor of readyPlayers) {
-    const row = el('div', 'ready-actor-row');
-    row.appendChild(el('div', 'ready-actor-name', `${actor.portrait} ${actor.name}`));
-
-    if (pending && pending.actorId === actor.id) {
-      const kindLabel = pending.key === 'skill' ? '스킬' : pending.key === 'ultimate' ? '필살기' : '일반 공격';
-      row.appendChild(el('div', 'hint', `${kindLabel} 대상을 선택하세요 (강조된 대상을 클릭)`));
-      const cancelBtn = el('button', 'ctrl-btn cancel', '취소');
-      cancelBtn.addEventListener('click', () => handlers.onCancelPending());
-      row.appendChild(cancelBtn);
-    } else {
-      const btnRow = el('div', 'action-buttons');
-      const normalBtn = el('button', 'action-btn', actor.skills.normal.name);
-      normalBtn.title = actor.skills.normal.description;
-      normalBtn.addEventListener('click', () => handlers.onChooseAction(actor.id, 'normal'));
-
-      const spCost = actor.skills.skill.spCost ?? 0;
-      const canAffordSkill = engine.sp >= spCost;
-      const skillBtn = el('button', `action-btn skill${canAffordSkill ? '' : ' disabled'}`, `${actor.skills.skill.name} (SP ${spCost})`);
-      skillBtn.title = actor.skills.skill.description;
-      skillBtn.disabled = !canAffordSkill;
-      skillBtn.addEventListener('click', () => handlers.onChooseAction(actor.id, 'skill'));
-
-      btnRow.appendChild(normalBtn);
-      btnRow.appendChild(skillBtn);
-      row.appendChild(btnRow);
-    }
-    list.appendChild(row);
+  if (pending && pending.actorId === selected.id) {
+    const kindLabel = pending.key === 'skill' ? '스킬' : pending.key === 'ultimate' ? '필살기' : '일반 공격';
+    panel.appendChild(el('div', 'hint', `${kindLabel} 대상을 선택하세요 (강조된 대상을 클릭)`));
+    const cancelBtn = el('button', 'ctrl-btn cancel', '취소');
+    cancelBtn.addEventListener('click', () => handlers.onCancelPending());
+    panel.appendChild(cancelBtn);
+    container.innerHTML = '';
+    container.appendChild(panel);
+    return;
   }
-  panel.appendChild(list);
+
+  panel.appendChild(el('div', 'ready-actor-name', `${selected.portrait} ${selected.name}`));
+  const btnRow = el('div', 'action-buttons');
+  const normalBtn = el('button', 'action-btn', `${selected.skills.normal.name} (Q)`);
+  normalBtn.title = selected.skills.normal.description;
+  normalBtn.addEventListener('click', () => handlers.onChooseAction(selected.id, 'normal'));
+
+  const spCost = selected.skills.skill.spCost ?? 0;
+  const canAffordSkill = engine.sp >= spCost;
+  const skillBtn = el(
+    'button',
+    `action-btn skill${canAffordSkill ? '' : ' disabled'}`,
+    `${selected.skills.skill.name} (E · SP ${spCost})`,
+  );
+  skillBtn.title = selected.skills.skill.description;
+  skillBtn.disabled = !canAffordSkill;
+  skillBtn.addEventListener('click', () => handlers.onChooseAction(selected.id, 'skill'));
+
+  btnRow.appendChild(normalBtn);
+  btnRow.appendChild(skillBtn);
+  panel.appendChild(btnRow);
   container.innerHTML = '';
   container.appendChild(panel);
 }
@@ -380,14 +387,18 @@ function renderOverlay(engine: BattleEngine, handlers: UiHandlers): void {
   resetBtn.onclick = () => handlers.onReset();
 }
 
-export function renderApp(engine: BattleEngine, pending: PendingAction | null, handlers: UiHandlers): void {
+export function renderApp(
+  engine: BattleEngine,
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+): void {
   syncControls(engine);
-  renderTurnOrder(engine);
   renderSpBar(engine);
   renderDamageIndicators(engine);
-  renderParty(engine, 'enemy', pending, handlers);
-  renderParty(engine, 'player', pending, handlers);
-  renderActionPanel(engine, pending, handlers);
+  renderParty(engine, 'enemy', pending, selectedActorId, handlers);
+  renderParty(engine, 'player', pending, selectedActorId, handlers);
+  renderActionPanel(engine, pending, selectedActorId, handlers);
   renderOverlay(engine, handlers);
 }
 

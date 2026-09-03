@@ -12,6 +12,7 @@ export interface PendingAction {
 export interface UiHandlers {
   onChooseAction: (actorId: string, key: ActionKey) => void;
   onChooseTarget: (targetId: string) => void;
+  onSelectActor: (actorId: string) => void;
   onCancelPending: () => void;
   onReset: () => void;
 }

@@ -41,6 +41,182 @@ body {
   gap: 16px;
 }
 
+/* ---------- 화면 전환 (타이틀 / 파티 편성 / 스테이지 / 전투) ---------- */
+.screen {
+  min-height: 100vh;
+}
+.screen[hidden] {
+  display: none;
+}
+
+.title-screen,
+.stage-screen {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 22px;
+  text-align: center;
+  padding: 20px;
+}
+
+.title-logo {
+  font-size: 72px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  background: linear-gradient(135deg, var(--player), var(--sp));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.title-sub {
+  font-size: 15px;
+  color: var(--text-dim);
+  margin-top: -14px;
+}
+.ctrl-btn.start-btn {
+  padding: 14px 40px;
+  font-size: 16px;
+  background: linear-gradient(135deg, #6a3fd6, #b25bff);
+  border-color: #b25bff;
+  color: #fff;
+}
+.ctrl-btn.start-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  background: var(--panel-2);
+  border-color: var(--border);
+  color: var(--text-dim);
+}
+
+.stage-title {
+  font-size: 56px;
+  font-weight: 900;
+  letter-spacing: 8px;
+  color: var(--energy);
+  text-shadow: 0 0 34px rgba(255, 202, 40, 0.5);
+  animation: stage-in 0.4s ease-out;
+}
+@keyframes stage-in {
+  from {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.party-screen {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.party-screen h2 {
+  font-size: 24px;
+  margin: 0;
+}
+.party-hint {
+  color: var(--text-dim);
+  font-size: 13px;
+  margin: 0 0 6px;
+}
+.party-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 14px;
+}
+.party-card {
+  background: var(--panel);
+  border: 2px solid var(--border);
+  border-radius: 14px;
+  padding: 16px;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.party-card:hover {
+  transform: translateY(-2px);
+}
+.party-card.selected {
+  border-color: var(--sp);
+  box-shadow: 0 0 0 3px rgba(100, 224, 200, 0.35);
+}
+.party-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.party-card-portrait {
+  font-size: 32px;
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-2);
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.party-card-name-col {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.party-card-name {
+  font-weight: 700;
+  font-size: 15px;
+}
+.party-card-check {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.party-card.selected .party-card-check {
+  color: var(--sp);
+  font-weight: 700;
+}
+.party-card-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+  font-size: 12.5px;
+  padding: 10px;
+  background: var(--panel-2);
+  border-radius: 8px;
+}
+.stat-row {
+  display: flex;
+  justify-content: space-between;
+}
+.stat-label {
+  color: var(--text-dim);
+}
+.stat-value {
+  font-weight: 700;
+}
+.party-card-skills {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.party-skill-row {
+  font-size: 12px;
+}
+.party-skill-name {
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.party-skill-desc {
+  color: var(--text-dim);
+  line-height: 1.4;
+}
+
 /* ---------- 헤더 ---------- */
 .topbar {
   display: flex;
@@ -101,56 +277,6 @@ body {
 }
 .ctrl-btn.cancel {
   border-color: var(--debuff);
-}
-
-/* ---------- 턴 순서 미리보기 ---------- */
-.turn-order {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
-  overflow-x: auto;
-}
-.turn-order-inner {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  white-space: nowrap;
-}
-.turn-order-label {
-  color: var(--text-dim);
-  font-size: 12px;
-  margin-right: 6px;
-  flex-shrink: 0;
-}
-.turn-chip {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 17px;
-  background: var(--panel-2);
-  border: 2px solid var(--border);
-  flex-shrink: 0;
-}
-.turn-chip.team-player {
-  border-color: var(--player);
-}
-.turn-chip.team-enemy {
-  border-color: var(--enemy);
-}
-.turn-chip.first {
-  box-shadow: 0 0 0 3px rgba(255, 202, 40, 0.5);
-}
-.turn-chip.dead {
-  opacity: 0.3;
-  filter: grayscale(1);
-}
-.turn-arrow {
-  color: var(--text-dim);
-  flex-shrink: 0;
 }
 
 /* ---------- 공유 SP 바 ---------- */
@@ -224,29 +350,30 @@ body {
   color: #fff;
 }
 
-/* ---------- 좌/우상단 피해량 표시 ---------- */
+/* ---------- 피해량 표시 (숫자만) — 아군->적: 우상단, 적->아군: 좌하단 ---------- */
 .dmg-indicator {
   position: fixed;
-  top: 68px;
   z-index: 30;
-  padding: 10px 18px;
+  padding: 8px 20px;
   border-radius: 10px;
-  font-size: 15px;
+  font-size: 30px;
   font-weight: 800;
+  font-variant-numeric: tabular-nums;
   pointer-events: none;
   box-shadow: var(--shadow);
-  transition: opacity 0.15s;
 }
 .dmg-indicator[hidden] {
   display: none;
 }
 .dmg-indicator-right {
+  top: 68px;
   right: 18px;
   background: rgba(93, 168, 255, 0.16);
   border: 1px solid var(--player);
   color: var(--player);
 }
 .dmg-indicator-left {
+  bottom: 18px;
   left: 18px;
   background: rgba(255, 107, 107, 0.16);
   border: 1px solid var(--enemy);
@@ -318,6 +445,16 @@ body {
 }
 .char-card.targetable:hover {
   transform: translateY(-3px);
+}
+.char-card.selectable {
+  cursor: pointer;
+}
+.char-card.selectable:hover {
+  transform: translateY(-2px);
+}
+.char-card.selected-for-action {
+  border-color: var(--sp);
+  box-shadow: 0 0 0 3px rgba(100, 224, 200, 0.5), var(--shadow);
 }
 
 @keyframes pulse-active {

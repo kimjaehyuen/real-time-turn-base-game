@@ -438,18 +438,38 @@ function makeCharacter(
   };
 }
 
-/** 아군은 최대 4명, 적은 최대 5마리까지 동시에 편성 가능하다. 이 데모는 그 한도를 꽉 채워 보여준다. */
-export function createInitialRoster(): Character[] {
+/** 파티 편성 화면에 캐릭터를 나열하기 위한 설계도 (아직 전투 인스턴스가 아니다) */
+export interface PlayerCharacterDef {
+  key: string;
+  name: string;
+  portrait: string;
+  base: Character['base'];
+  makeSkills: () => Character['skills'];
+}
+
+/** 편성 가능한 아군 전체 목록 — 최대 4명까지 이 중에서 선택해 전투에 데려간다. */
+export const PLAYER_CHARACTER_DEFS: PlayerCharacterDef[] = [
+  { key: 'warrior', name: '전사 브란', portrait: '🗡️', base: { hp: 1750, atk: 130, def: 105, spd: 100 }, makeSkills: warriorSkills },
+  { key: 'mage', name: '화염 마도사 리엘', portrait: '🔥', base: { hp: 1100, atk: 150, def: 60, spd: 125 }, makeSkills: mageSkills },
+  { key: 'healer', name: '성기사 세라', portrait: '✨', base: { hp: 1350, atk: 110, def: 80, spd: 95 }, makeSkills: healerSkills },
+  { key: 'assassin', name: '암살자 카인', portrait: '🥷', base: { hp: 1050, atk: 145, def: 55, spd: 140 }, makeSkills: assassinSkills },
+];
+
+/** 이 데모의 적 편성(고정) — 최대 5마리까지 동시에 등장한다. */
+const ENEMY_DEFS: PlayerCharacterDef[] = [
+  { key: 'orc', name: '오크 전사', portrait: '👹', base: { hp: 1300, atk: 120, def: 80, spd: 105 }, makeSkills: orcSkills },
+  { key: 'shaman', name: '다크 샤먼', portrait: '🧙', base: { hp: 1000, atk: 125, def: 60, spd: 115 }, makeSkills: shamanSkills },
+  { key: 'goblin', name: '고블린 정찰병', portrait: '👺', base: { hp: 850, atk: 100, def: 45, spd: 130 }, makeSkills: goblinScoutSkills },
+  { key: 'skeleton', name: '스켈레톤 방패병', portrait: '💀', base: { hp: 1600, atk: 90, def: 110, spd: 80 }, makeSkills: skeletonGuardSkills },
+  { key: 'archer', name: '다크엘프 궁수', portrait: '🏹', base: { hp: 950, atk: 130, def: 55, spd: 110 }, makeSkills: darkElfArcherSkills },
+];
+
+/** 파티 편성 화면에서 선택된 아군 키(1~4명)로 실제 전투 로스터를 만든다. */
+export function createBattleRoster(selectedPlayerKeys: string[]): Character[] {
   // uid는 리셋하지 않는다 — 재시작 후에도 캐릭터 id가 이전 전투와 겹치지 않도록 보장한다.
-  return [
-    makeCharacter('전사 브란', 'player', '🗡️', { hp: 1750, atk: 130, def: 105, spd: 100 }, warriorSkills()),
-    makeCharacter('화염 마도사 리엘', 'player', '🔥', { hp: 1100, atk: 150, def: 60, spd: 125 }, mageSkills()),
-    makeCharacter('성기사 세라', 'player', '✨', { hp: 1350, atk: 110, def: 80, spd: 95 }, healerSkills()),
-    makeCharacter('암살자 카인', 'player', '🥷', { hp: 1050, atk: 145, def: 55, spd: 140 }, assassinSkills()),
-    makeCharacter('오크 전사', 'enemy', '👹', { hp: 1300, atk: 120, def: 80, spd: 105 }, orcSkills()),
-    makeCharacter('다크 샤먼', 'enemy', '🧙', { hp: 1000, atk: 125, def: 60, spd: 115 }, shamanSkills()),
-    makeCharacter('고블린 정찰병', 'enemy', '👺', { hp: 850, atk: 100, def: 45, spd: 130 }, goblinScoutSkills()),
-    makeCharacter('스켈레톤 방패병', 'enemy', '💀', { hp: 1600, atk: 90, def: 110, spd: 80 }, skeletonGuardSkills()),
-    makeCharacter('다크엘프 궁수', 'enemy', '🏹', { hp: 950, atk: 130, def: 55, spd: 110 }, darkElfArcherSkills()),
-  ];
+  const players = PLAYER_CHARACTER_DEFS.filter((def) => selectedPlayerKeys.includes(def.key)).map((def) =>
+    makeCharacter(def.name, 'player', def.portrait, def.base, def.makeSkills()),
+  );
+  const enemies = ENEMY_DEFS.map((def) => makeCharacter(def.name, 'enemy', def.portrait, def.base, def.makeSkills()));
+  return [...players, ...enemies];
 }
