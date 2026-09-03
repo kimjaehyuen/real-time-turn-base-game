@@ -200,11 +200,7 @@ body {
   color: var(--text-dim);
 }
 
-/* ---------- 키보드로 선택된 캐릭터 ---------- */
-.char-card.keyboard-selected {
-  border-color: var(--sp);
-  box-shadow: 0 0 0 2px rgba(100, 224, 200, 0.45);
-}
+/* ---------- 필살기 단축키 번호 배지 ---------- */
 .slot-key {
   position: absolute;
   top: 8px;
@@ -220,21 +216,44 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.slot-key.ready {
+  background: linear-gradient(135deg, #6a3fd6, #b25bff);
+  border-color: #b25bff;
+  color: #fff;
+}
+
+/* ---------- 좌/우상단 피해량 표시 ---------- */
+.dmg-indicator {
+  position: fixed;
+  top: 68px;
+  z-index: 30;
+  padding: 10px 18px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 800;
+  pointer-events: none;
+  box-shadow: var(--shadow);
+  transition: opacity 0.15s;
+}
+.dmg-indicator[hidden] {
+  display: none;
+}
+.dmg-indicator-right {
+  right: 18px;
+  background: rgba(93, 168, 255, 0.16);
+  border: 1px solid var(--player);
+  color: var(--player);
+}
+.dmg-indicator-left {
+  left: 18px;
+  background: rgba(255, 107, 107, 0.16);
+  border: 1px solid var(--enemy);
+  color: var(--enemy);
 }
 
 /* ---------- 레이아웃 ---------- */
-.layout {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 16px;
-  align-items: start;
-}
-@media (max-width: 900px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-}
-
 .battlefield {
   display: flex;
   flex-direction: column;
@@ -243,8 +262,19 @@ body {
 
 .party {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
-  gap: 12px;
+  gap: 10px;
+}
+.enemy-party {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+.player-party {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 860px) {
+  .enemy-party,
+  .player-party {
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  }
 }
 
 .vs-divider {
@@ -532,50 +562,6 @@ body {
   transform: none;
   background: var(--panel-2);
 }
-
-/* ---------- 전투 로그 ---------- */
-.battle-log-panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 14px;
-  display: flex;
-  flex-direction: column;
-  min-height: 300px;
-  max-height: 640px;
-}
-.battle-log-panel h2 {
-  font-size: 14px;
-  margin: 0 0 8px;
-  color: var(--text-dim);
-}
-.log-list {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  font-size: 12.5px;
-  flex: 1;
-}
-.log-entry {
-  display: flex;
-  gap: 6px;
-  line-height: 1.4;
-}
-.log-time {
-  color: var(--text-dim);
-  flex-shrink: 0;
-  font-variant-numeric: tabular-nums;
-}
-.log-entry.kind-damage .log-msg { color: #ff8a80; }
-.log-entry.kind-heal .log-msg { color: #81c995; }
-.log-entry.kind-buff .log-msg { color: var(--buff); }
-.log-entry.kind-debuff .log-msg { color: var(--debuff); }
-.log-entry.kind-ultimate .log-msg { color: var(--energy); font-weight: 700; }
-.log-entry.kind-ready .log-msg { color: var(--atb); }
-.log-entry.kind-defeat .log-msg { color: #ff5252; font-weight: 700; }
-.log-entry.kind-action .log-msg { color: var(--text); font-weight: 600; }
-.log-entry.kind-info .log-msg { color: var(--text-dim); }
 
 /* ---------- 오버레이 ---------- */
 .overlay {

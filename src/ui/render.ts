@@ -66,6 +66,20 @@ function renderTurnOrder(engine: BattleEngine): void {
 }
 
 // ---------------------------------------------------------------------------
+// 좌/우상단 피해량 표시 — 아군/적이 새 행동을 시작할 때마다 각각 리셋된다 (engine이 관리).
+// ---------------------------------------------------------------------------
+function renderDamageIndicators(engine: BattleEngine): void {
+  const right = byId('dmg-right'); // 아군 -> 적
+  const left = byId('dmg-left'); // 적 -> 아군
+
+  right.hidden = engine.lastPlayerDamage <= 0;
+  right.textContent = engine.lastPlayerDamage > 0 ? `적에게 ${engine.lastPlayerDamage} 피해` : '';
+
+  left.hidden = engine.lastEnemyDamage <= 0;
+  left.textContent = engine.lastEnemyDamage > 0 ? `아군이 ${engine.lastEnemyDamage} 피해` : '';
+}
+
+// ---------------------------------------------------------------------------
 // 캐릭터 카드
 // 구조(버튼/상태칩/뱃지 등)는 "구조 시그니처"가 바뀔 때만 다시 그리고,
 // 매 프레임 바뀌는 수치(HP/게이지/에너지/남은시간)는 캐시된 엘리먼트를 직접 갱신한다.
@@ -91,7 +105,7 @@ export function clearCardCache(): void {
   cardCache.clear();
 }
 
-function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null, selectedActorId: string | null): string {
+function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null): string {
   const targetable = !!pending && isValidTarget(engine, pending, c);
   const ultReady = c.energy >= c.maxEnergy;
   const statusSig = c.statuses.map((s) => s.id).join(',');
@@ -100,7 +114,6 @@ function cardSignature(engine: BattleEngine, c: Character, pending: PendingActio
     engine.isReady(c.id) ? 'ready' : 'idle',
     targetable ? 'targetable' : '',
     ultReady ? 'ultready' : '',
-    c.id === selectedActorId ? 'selected' : '',
     statusSig,
   ].join('|');
 }
@@ -116,20 +129,8 @@ function buildBar(label: string, kind: string): { wrap: HTMLElement; fill: HTMLE
   return { wrap, fill, labelEl };
 }
 
-function buildCard(
-  engine: BattleEngine,
-  c: Character,
-  pending: PendingAction | null,
-  selectedActorId: string | null,
-  handlers: UiHandlers,
-): CardHandle {
-  const classes = [
-    'char-card',
-    `team-${c.team}`,
-    c.alive ? '' : 'dead',
-    engine.isReady(c.id) ? 'active-turn' : '',
-    c.id === selectedActorId ? 'keyboard-selected' : '',
-  ]
+function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | null, handlers: UiHandlers): CardHandle {
+  const classes = ['char-card', `team-${c.team}`, c.alive ? '' : 'dead', engine.isReady(c.id) ? 'active-turn' : '']
     .filter(Boolean)
     .join(' ');
   const root = el('div', classes);
@@ -143,7 +144,10 @@ function buildCard(
   if (c.team === 'player') {
     const slotIndex = engine.characters.filter((p) => p.team === 'player').indexOf(c);
     if (slotIndex >= 0 && slotIndex < 4) {
-      root.appendChild(el('div', 'slot-key', String(slotIndex + 1)));
+      const ultReady = c.energy >= c.maxEnergy;
+      const key = el('div', `slot-key${ultReady ? ' ready' : ''}`, String(slotIndex + 1));
+      key.title = ultReady ? '지금 이 키로 필살기를 사용할 수 있습니다' : `필살기가 준비되면 ${slotIndex + 1}키로 즉시 사용`;
+      root.appendChild(key);
     }
   }
 
@@ -200,7 +204,7 @@ function buildCard(
 
   return {
     root,
-    signature: cardSignature(engine, c, pending, selectedActorId),
+    signature: cardSignature(engine, c, pending),
     hpFill: hp.fill,
     hpLabel: hp.labelEl,
     atbFill: atb.fill,
@@ -248,22 +252,16 @@ function updateCardDynamics(engine: BattleEngine, c: Character, handle: CardHand
   }
 }
 
-function renderParty(
-  engine: BattleEngine,
-  team: 'player' | 'enemy',
-  pending: PendingAction | null,
-  selectedActorId: string | null,
-  handlers: UiHandlers,
-): void {
+function renderParty(engine: BattleEngine, team: 'player' | 'enemy', pending: PendingAction | null, handlers: UiHandlers): void {
   const container = byId(team === 'player' ? 'player-party' : 'enemy-party');
   const members = engine.characters.filter((c) => c.team === team);
 
   const frag = document.createDocumentFragment();
   for (const c of members) {
-    const sig = cardSignature(engine, c, pending, selectedActorId);
+    const sig = cardSignature(engine, c, pending);
     let handle = cardCache.get(c.id);
     if (!handle || handle.signature !== sig) {
-      handle = buildCard(engine, c, pending, selectedActorId, handlers);
+      handle = buildCard(engine, c, pending, handlers);
       cardCache.set(c.id, handle);
     }
     updateCardDynamics(engine, c, handle);
@@ -296,10 +294,10 @@ function renderSpBar(engine: BattleEngine): void {
 }
 
 // ---------------------------------------------------------------------------
-// 하단 액션 패널: 턴이 활성화된 "플레이어" 캐릭터 전원의 일반공격/스킬 선택.
+// 하단 액션 패널: 턴이 활성화된 "플레이어" 캐릭터 전원의 일반공격/스킬 선택 (전부 마우스 클릭).
 // 동시에 여러 명이 준비될 수 있으므로, 준비된 순서와 무관하게 원하는 캐릭터부터
 // 먼저 행동시킬 수 있다 (적도 마찬가지로 각자 독립적인 타이밍에 따로 행동한다).
-// (필살기는 각 캐릭터 카드의 버튼으로 언제든 별도 사용 — 여기 포함되지 않음)
+// (필살기는 각 캐릭터 카드의 버튼 — 또는 키보드 1~4 — 로 언제든 별도 사용, 여기 포함되지 않음)
 // 상태가 바뀔 때만 다시 그린다.
 // ---------------------------------------------------------------------------
 let lastPanelSignature = '';
@@ -366,40 +364,6 @@ export function resetActionPanelCache(): void {
 }
 
 // ---------------------------------------------------------------------------
-// 전투 로그 — 새로 추가된 항목만 append 한다
-// ---------------------------------------------------------------------------
-let lastLogCount = 0;
-
-function renderLog(engine: BattleEngine): void {
-  const container = byId('log-list');
-
-  if (engine.logs.length < lastLogCount) {
-    container.innerHTML = '';
-    lastLogCount = 0;
-  }
-  if (engine.logs.length === lastLogCount) return;
-
-  const wasAtBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 40;
-
-  const frag = document.createDocumentFragment();
-  for (let i = lastLogCount; i < engine.logs.length; i++) {
-    const entry = engine.logs[i];
-    const line = el('div', `log-entry kind-${entry.kind}`);
-    line.appendChild(el('span', 'log-time', `${entry.time.toFixed(1)}s`));
-    line.appendChild(el('span', 'log-msg', entry.message));
-    frag.appendChild(line);
-  }
-  container.appendChild(frag);
-  lastLogCount = engine.logs.length;
-
-  if (wasAtBottom) container.scrollTop = container.scrollHeight;
-}
-
-export function resetLogCache(): void {
-  lastLogCount = 0;
-}
-
-// ---------------------------------------------------------------------------
 // 승패 오버레이
 // ---------------------------------------------------------------------------
 function renderOverlay(engine: BattleEngine, handlers: UiHandlers): void {
@@ -416,24 +380,18 @@ function renderOverlay(engine: BattleEngine, handlers: UiHandlers): void {
   resetBtn.onclick = () => handlers.onReset();
 }
 
-export function renderApp(
-  engine: BattleEngine,
-  pending: PendingAction | null,
-  selectedActorId: string | null,
-  handlers: UiHandlers,
-): void {
+export function renderApp(engine: BattleEngine, pending: PendingAction | null, handlers: UiHandlers): void {
   syncControls(engine);
   renderTurnOrder(engine);
   renderSpBar(engine);
-  renderParty(engine, 'enemy', pending, selectedActorId, handlers);
-  renderParty(engine, 'player', pending, selectedActorId, handlers);
+  renderDamageIndicators(engine);
+  renderParty(engine, 'enemy', pending, handlers);
+  renderParty(engine, 'player', pending, handlers);
   renderActionPanel(engine, pending, handlers);
-  renderLog(engine);
   renderOverlay(engine, handlers);
 }
 
 export function resetUiCaches(): void {
   clearCardCache();
   resetActionPanelCache();
-  resetLogCache();
 }

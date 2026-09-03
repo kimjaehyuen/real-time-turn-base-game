@@ -1,4 +1,4 @@
-import type { BattleApi, Character, LogKind, StatusEffect, StatusTemplate, TargetType } from './types';
+import type { BattleApi, Character, StatusEffect, StatusTemplate, TargetType } from './types';
 import { createInitialRoster } from './characters';
 import { dmgDealtMult, dmgTakenMult, effectiveAtk, effectiveDef, effectiveSpd } from './statusEffects';
 
@@ -16,28 +16,22 @@ const ENEMY_THINK_MS_MAX = 950;
 
 export type BattleStatus = 'ongoing' | 'player_win' | 'enemy_win';
 
-export interface LogEntry {
-  id: number;
-  time: number; // battleTimeMs 기준 초 단위, 소수 1자리
-  kind: LogKind;
-  message: string;
-}
-
-let logSeq = 0;
-
 export class BattleEngine implements BattleApi {
   characters: Character[] = [];
   /** 게이지가 가득 차 "턴이 활성화된" 캐릭터들. 순서는 단순 참고용일 뿐, 행동 순서를 강제하지 않는다 —
    *  나중에 활성화된 캐릭터가 먼저 활성화된 캐릭터보다 먼저 행동할 수 있다 (아래 update() 참고). */
   readyIds: string[] = [];
   status: BattleStatus = 'ongoing';
-  logs: LogEntry[] = [];
   battleTimeMs = 0;
   paused = false;
   timeScale = 1;
   /** 아군 전체가 공유하는 SP. 스킬 사용에 소모되고 일반공격 등으로 회복된다 (적은 관여하지 않음). */
   sp = STARTING_SP;
   maxSp = MAX_SP;
+  /** 아군이 최근 행동에서 적에게 입힌 피해 합계 — 아군이 새 행동을 시작할 때마다 0으로 리셋된다. */
+  lastPlayerDamage = 0;
+  /** 적이 최근 행동에서 아군에게 입힌 피해 합계 — 적이 새 행동을 시작할 때마다 0으로 리셋된다. */
+  lastEnemyDamage = 0;
 
   /** 준비된 적 캐릭터마다 독립적으로 흐르는 "생각 시간". 캐릭터별로 따로 카운트되므로
    *  먼저 준비된 적이라도 이 타이머가 늦게 끝나면 나중에 준비된 적에게 행동 순서를 내줄 수 있다. */
@@ -53,12 +47,12 @@ export class BattleEngine implements BattleApi {
     this.characters = createInitialRoster();
     this.readyIds = [];
     this.status = 'ongoing';
-    this.logs = [];
     this.battleTimeMs = 0;
     this.sp = STARTING_SP;
+    this.lastPlayerDamage = 0;
+    this.lastEnemyDamage = 0;
     this.enemyThinkTimers.clear();
     this.targetSelectionPaused = false;
-    this.log('전투 시작!', 'info');
   }
 
   setPaused(paused: boolean): void {
@@ -144,7 +138,7 @@ export class BattleEngine implements BattleApi {
             if (s.tick.isHeal) {
               this.heal(source, c, amount);
             } else {
-              this.applyDotDamage(c, amount, s.name);
+              this.applyDotDamage(source, c, amount);
             }
             if (!c.alive) break;
           }
@@ -165,12 +159,17 @@ export class BattleEngine implements BattleApi {
       if (c.gauge >= GAUGE_MAX) {
         c.gauge = GAUGE_MAX;
         this.readyIds.push(c.id);
-        this.log(`${c.name}의 턴이 활성화되었습니다.`, 'ready');
         if (c.team === 'enemy') {
           this.enemyThinkTimers.set(c.id, ENEMY_THINK_MS_MIN + Math.random() * (ENEMY_THINK_MS_MAX - ENEMY_THINK_MS_MIN));
         }
       }
     }
+  }
+
+  /** 해당 진영이 새 행동을 시작할 때 그 진영이 입힌 피해 표시를 리셋한다 (규칙: 행동할 때마다 초기화). */
+  private resetDamageDisplay(team: Character['team']): void {
+    if (team === 'player') this.lastPlayerDamage = 0;
+    else this.lastEnemyDamage = 0;
   }
 
   // -------------------------------------------------------------------------
@@ -192,7 +191,7 @@ export class BattleEngine implements BattleApi {
     const targets = this.resolveTargets(actor, skillDef.targetType, targetId);
     if (!targets.length) return false;
 
-    this.log(`${actor.name}의 [${skillDef.name}]!`, 'action');
+    this.resetDamageDisplay(actor.team);
     if (spCost > 0) {
       this.sp = Math.max(0, this.sp - spCost);
     }
@@ -239,7 +238,7 @@ export class BattleEngine implements BattleApi {
     const targets = this.resolveTargets(actor, skillDef.targetType, targetId);
     if (!targets.length) return false;
 
-    this.log(`💫 ${actor.name}의 필살기 [${skillDef.name}]! (턴 순서와 무관하게 즉시 발동)`, 'ultimate');
+    this.resetDamageDisplay(actor.team);
     skillDef.execute({ battle: this, actor, targets });
     actor.energy = 0;
     this.gainSp(actor, skillDef.spGain ?? 0);
@@ -367,16 +366,22 @@ export class BattleEngine implements BattleApi {
 
     target.hp = Math.max(0, target.hp - finalDmg);
     target.energy = Math.min(target.maxEnergy, target.energy + HIT_ENERGY_GAIN);
-    this.log(`${attacker.name} → ${target.name} : ${finalDmg} 피해${isCrit ? ' (치명타!)' : ''}`, 'damage');
+    this.recordDamage(attacker.team, finalDmg);
     this.handlePossibleDeath(target);
     return finalDmg;
   }
 
-  private applyDotDamage(target: Character, amount: number, label: string): void {
+  private applyDotDamage(source: Character, target: Character, amount: number): void {
     if (!target.alive) return;
     target.hp = Math.max(0, target.hp - amount);
-    this.log(`[${label}] ${target.name}이(가) ${amount}의 피해를 입었습니다.`, 'debuff');
+    this.recordDamage(source.team, amount);
     this.handlePossibleDeath(target);
+  }
+
+  /** attacker 쪽의 "최근 행동 피해량" 표시에 더한다 (해당 진영의 새 행동이 시작될 때 리셋됨). */
+  private recordDamage(attackerTeam: Character['team'], amount: number): void {
+    if (attackerTeam === 'player') this.lastPlayerDamage += amount;
+    else this.lastEnemyDamage += amount;
   }
 
   private handlePossibleDeath(target: Character): void {
@@ -384,7 +389,6 @@ export class BattleEngine implements BattleApi {
       target.alive = false;
       target.gauge = 0;
       target.statuses = [];
-      this.log(`${target.name} 전투불능!`, 'defeat');
       this.readyIds = this.readyIds.filter((id) => id !== target.id);
       this.enemyThinkTimers.delete(target.id);
     }
@@ -397,22 +401,16 @@ export class BattleEngine implements BattleApi {
     const enemiesAlive = this.characters.some((c) => c.team === 'enemy' && c.alive);
     if (!playersAlive) {
       this.status = 'enemy_win';
-      this.log('전멸했습니다... 패배.', 'defeat');
     } else if (!enemiesAlive) {
       this.status = 'player_win';
-      this.log('적을 모두 물리쳤습니다! 승리!', 'defeat');
     }
   }
 
-  heal(caster: Character, target: Character, amount: number): number {
+  heal(_caster: Character, target: Character, amount: number): number {
     if (!target.alive) return 0;
     const before = target.hp;
     target.hp = Math.min(target.maxHp, target.hp + Math.max(0, amount));
-    const healed = target.hp - before;
-    if (healed > 0) {
-      this.log(`${caster.name} → ${target.name} : 체력 ${healed} 회복`, 'heal');
-    }
-    return healed;
+    return target.hp - before;
   }
 
   applyStatus(target: Character, template: StatusTemplate, source: Character): void {
@@ -429,18 +427,10 @@ export class BattleEngine implements BattleApi {
     const existingIdx = target.statuses.findIndex((s) => s.defId === template.defId);
     if (existingIdx >= 0) target.statuses.splice(existingIdx, 1, instance);
     else target.statuses.push(instance);
-
-    const durationLabel =
-      template.durationType === 'turn' ? `${template.turns}턴` : `${((template.ms ?? 0) / 1000).toFixed(1)}초`;
-    this.log(
-      `${target.name}에게 [${template.icon} ${template.name}] ${template.kind === 'buff' ? '부여' : '적용'} (${durationLabel})`,
-      template.kind,
-    );
   }
 
   private expireStatus(owner: Character, status: StatusEffect): void {
     owner.statuses = owner.statuses.filter((s) => s.id !== status.id);
-    this.log(`${owner.name}의 [${status.icon} ${status.name}] 효과가 종료되었습니다.`, 'info');
   }
 
   livingAllies(of: Character): Character[] {
@@ -453,11 +443,5 @@ export class BattleEngine implements BattleApi {
 
   rng(): number {
     return Math.random();
-  }
-
-  log(message: string, kind: LogKind): void {
-    logSeq += 1;
-    this.logs.push({ id: logSeq, time: Math.round(this.battleTimeMs) / 1000, kind, message });
-    if (this.logs.length > 200) this.logs.shift();
   }
 }

@@ -8,6 +8,9 @@
   </head>
   <body>
     <div id="app">
+      <div class="dmg-indicator dmg-indicator-left" id="dmg-left" hidden></div>
+      <div class="dmg-indicator dmg-indicator-right" id="dmg-right" hidden></div>
+
       <header class="topbar">
         <h1>⚔️ 실시간 턴제 전투 데모</h1>
         <div class="controls">
@@ -25,22 +28,15 @@
 
       <section class="sp-bar" id="sp-bar"></section>
 
-      <div class="keyboard-hint">⌨ 1-4 캐릭터 선택 · Q 일반공격 · E 스킬 · Space 필살기</div>
+      <div class="keyboard-hint">⌨ 필살기 준비되면 1-4로 즉시 사용 (캐릭터/대상 선택은 마우스 클릭)</div>
 
-      <div class="layout">
-        <main class="battlefield">
-          <div class="party enemy-party" id="enemy-party"></div>
-          <div class="vs-divider">VS</div>
-          <div class="party player-party" id="player-party"></div>
+      <main class="battlefield">
+        <div class="party enemy-party" id="enemy-party"></div>
+        <div class="vs-divider">VS</div>
+        <div class="party player-party" id="player-party"></div>
 
-          <div class="action-panel" id="action-panel"></div>
-        </main>
-
-        <aside class="battle-log-panel">
-          <h2>전투 로그</h2>
-          <div class="log-list" id="log-list"></div>
-        </aside>
-      </div>
+        <div class="action-panel" id="action-panel"></div>
+      </main>
     </div>
 
     <div class="overlay" id="overlay" hidden>

@@ -1,13 +1,10 @@
 import './style.css';
 import { BattleEngine } from './engine/battle';
 import { renderApp, resetUiCaches } from './ui/render';
-import type { Character } from './engine/types';
 import type { ActionKey, PendingAction, UiHandlers } from './ui/types';
 
 const engine = new BattleEngine();
 let pending: PendingAction | null = null;
-/** 키보드 1~4로 선택된 아군 캐릭터 (Q/E/Space가 이 캐릭터에게 적용된다) */
-let selectedActorId: string | null = null;
 
 /** 대상 선택 상태를 바꿀 때는 항상 이 함수로: 엔진에도 함께 알려 게이지 충전을 멈추거나 재개한다. */
 function setPending(next: PendingAction | null): void {
@@ -51,65 +48,30 @@ const handlers: UiHandlers = {
   onReset: () => {
     engine.reset();
     setPending(null);
-    selectedActorId = null;
     resetUiCaches();
     render();
   },
 };
 
 function render(): void {
-  renderApp(engine, pending, selectedActorId, handlers);
+  renderApp(engine, pending, handlers);
 }
 
 // -------------------------------------------------------------------------
-// 키보드 조작: 1~4 캐릭터 선택, Q 일반공격, E 스킬, Space 필살기
+// 키보드 조작: 캐릭터/대상 선택은 마우스로 하고, 1~4는 그 슬롯의 필살기가
+// 준비되어 있을 때만 즉시 사용하는 단축키다.
 // -------------------------------------------------------------------------
-function playerSlot(index: number): Character | undefined {
-  return engine.characters.filter((c) => c.team === 'player')[index];
-}
-
-function canAct(actor: Character, key: ActionKey): boolean {
-  if (!actor.alive) return false;
-  if (key === 'ultimate') return actor.energy >= actor.maxEnergy;
-  if (!engine.isReady(actor.id)) return false;
-  if (key === 'skill') {
-    const cost = actor.skills.skill.spCost ?? 0;
-    return engine.sp >= cost;
-  }
-  return true;
-}
-
-function triggerSelected(key: ActionKey): void {
-  if (!selectedActorId) return;
-  const actor = engine.findById(selectedActorId);
-  if (!actor || !canAct(actor, key)) return;
-  chooseAction(actor.id, key);
-}
-
 window.addEventListener('keydown', (e) => {
   if (engine.status !== 'ongoing') return;
   if (e.repeat) return;
+  if (e.key < '1' || e.key > '4') return;
 
-  if (e.key >= '1' && e.key <= '4') {
-    const actor = playerSlot(Number(e.key) - 1);
-    if (actor) {
-      selectedActorId = actor.id;
-      render();
-    }
-    return;
-  }
-  if (e.key === 'q' || e.key === 'Q') {
-    triggerSelected('normal');
-    return;
-  }
-  if (e.key === 'e' || e.key === 'E') {
-    triggerSelected('skill');
-    return;
-  }
-  if (e.code === 'Space') {
-    e.preventDefault();
-    triggerSelected('ultimate');
-  }
+  const players = engine.characters.filter((c) => c.team === 'player');
+  const actor = players[Number(e.key) - 1];
+  if (!actor || !actor.alive) return;
+  if (actor.energy < actor.maxEnergy) return;
+
+  chooseAction(actor.id, 'ultimate');
 });
 
 // 정적 컨트롤 버튼은 한 번만 연결한다
@@ -124,7 +86,6 @@ document.querySelectorAll<HTMLButtonElement>('.speed-btn').forEach((btn) => {
 document.getElementById('btn-reset')!.addEventListener('click', () => {
   engine.reset();
   setPending(null);
-  selectedActorId = null;
   resetUiCaches();
 });
 

@@ -4,17 +4,6 @@ export type Team = 'player' | 'enemy';
 
 export type DurationType = 'turn' | 'time';
 
-export type LogKind =
-  | 'info'
-  | 'ready'
-  | 'action'
-  | 'damage'
-  | 'heal'
-  | 'buff'
-  | 'debuff'
-  | 'ultimate'
-  | 'defeat';
-
 /** 스탯에 곱연산으로 적용되는 보정치 (0.2 = +20%, -0.2 = -20%) */
 export interface StatModifiers {
   atk?: number;
@@ -107,7 +96,6 @@ export interface BattleApi {
   dealDamage(attacker: Character, target: Character, atkMultiplier: number): number;
   heal(caster: Character, target: Character, amount: number): number;
   applyStatus(target: Character, template: StatusTemplate, source: Character): void;
-  log(message: string, kind: LogKind): void;
   livingAllies(of: Character): Character[];
   livingEnemies(of: Character): Character[];
   rng(): number;
