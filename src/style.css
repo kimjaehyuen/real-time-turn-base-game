@@ -505,14 +505,12 @@ body {
   font-weight: 700;
   padding: 3px 8px;
   border-radius: 999px;
+  visibility: hidden;
 }
 .turn-badge.active {
+  visibility: visible;
   background: rgba(255, 202, 40, 0.18);
   color: var(--energy);
-}
-.turn-badge.waiting {
-  background: rgba(93, 168, 255, 0.15);
-  color: var(--atb);
 }
 
 .bar-wrap {
@@ -551,7 +549,9 @@ body {
 .status-row {
   display: flex;
   flex-wrap: wrap;
+  align-content: flex-start;
   gap: 5px;
+  min-height: 26px;
 }
 .status-chip {
   position: relative;
