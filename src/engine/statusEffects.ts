@@ -74,6 +74,26 @@ export const Poison: StatusTemplate = {
   tick: { intervalMs: 1000, atkMultiplier: 0.1 },
 };
 
+export const Sprint: StatusTemplate = {
+  defId: 'sprint',
+  name: '질주',
+  icon: '💨',
+  kind: 'buff',
+  durationType: 'turn',
+  turns: 2,
+  modifiers: { spd: 0.25 },
+};
+
+export const Bulwark: StatusTemplate = {
+  defId: 'bulwark',
+  name: '방벽',
+  icon: '🧱',
+  kind: 'buff',
+  durationType: 'turn',
+  turns: 2,
+  modifiers: { def: 0.3 },
+};
+
 export const Regen: StatusTemplate = {
   defId: 'regen',
   name: '재생',

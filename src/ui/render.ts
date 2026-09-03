@@ -91,7 +91,7 @@ export function clearCardCache(): void {
   cardCache.clear();
 }
 
-function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null): string {
+function cardSignature(engine: BattleEngine, c: Character, pending: PendingAction | null, selectedActorId: string | null): string {
   const targetable = !!pending && isValidTarget(engine, pending, c);
   const ultReady = c.energy >= c.maxEnergy;
   const statusSig = c.statuses.map((s) => s.id).join(',');
@@ -100,6 +100,7 @@ function cardSignature(engine: BattleEngine, c: Character, pending: PendingActio
     engine.isReady(c.id) ? 'ready' : 'idle',
     targetable ? 'targetable' : '',
     ultReady ? 'ultready' : '',
+    c.id === selectedActorId ? 'selected' : '',
     statusSig,
   ].join('|');
 }
@@ -115,8 +116,20 @@ function buildBar(label: string, kind: string): { wrap: HTMLElement; fill: HTMLE
   return { wrap, fill, labelEl };
 }
 
-function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | null, handlers: UiHandlers): CardHandle {
-  const classes = ['char-card', `team-${c.team}`, c.alive ? '' : 'dead', engine.isReady(c.id) ? 'active-turn' : '']
+function buildCard(
+  engine: BattleEngine,
+  c: Character,
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+): CardHandle {
+  const classes = [
+    'char-card',
+    `team-${c.team}`,
+    c.alive ? '' : 'dead',
+    engine.isReady(c.id) ? 'active-turn' : '',
+    c.id === selectedActorId ? 'keyboard-selected' : '',
+  ]
     .filter(Boolean)
     .join(' ');
   const root = el('div', classes);
@@ -125,6 +138,13 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
   if (targetable) {
     root.classList.add('targetable');
     root.addEventListener('click', () => handlers.onChooseTarget(c.id));
+  }
+
+  if (c.team === 'player') {
+    const slotIndex = engine.characters.filter((p) => p.team === 'player').indexOf(c);
+    if (slotIndex >= 0 && slotIndex < 4) {
+      root.appendChild(el('div', 'slot-key', String(slotIndex + 1)));
+    }
   }
 
   const head = el('div', 'card-head');
@@ -180,7 +200,7 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
 
   return {
     root,
-    signature: cardSignature(engine, c, pending),
+    signature: cardSignature(engine, c, pending, selectedActorId),
     hpFill: hp.fill,
     hpLabel: hp.labelEl,
     atbFill: atb.fill,
@@ -228,16 +248,22 @@ function updateCardDynamics(engine: BattleEngine, c: Character, handle: CardHand
   }
 }
 
-function renderParty(engine: BattleEngine, team: 'player' | 'enemy', pending: PendingAction | null, handlers: UiHandlers): void {
+function renderParty(
+  engine: BattleEngine,
+  team: 'player' | 'enemy',
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+): void {
   const container = byId(team === 'player' ? 'player-party' : 'enemy-party');
   const members = engine.characters.filter((c) => c.team === team);
 
   const frag = document.createDocumentFragment();
   for (const c of members) {
-    const sig = cardSignature(engine, c, pending);
+    const sig = cardSignature(engine, c, pending, selectedActorId);
     let handle = cardCache.get(c.id);
     if (!handle || handle.signature !== sig) {
-      handle = buildCard(engine, c, pending, handlers);
+      handle = buildCard(engine, c, pending, selectedActorId, handlers);
       cardCache.set(c.id, handle);
     }
     updateCardDynamics(engine, c, handle);
@@ -246,6 +272,27 @@ function renderParty(engine: BattleEngine, team: 'player' | 'enemy', pending: Pe
 
   container.innerHTML = '';
   container.appendChild(frag);
+}
+
+// ---------------------------------------------------------------------------
+// 공유 SP 바 — 아군 전체가 공유하는 스킬 포인트. 매 프레임 값만 갱신한다.
+// ---------------------------------------------------------------------------
+function renderSpBar(engine: BattleEngine): void {
+  const container = byId('sp-bar');
+  if (!container.childElementCount) {
+    container.appendChild(el('span', 'sp-bar-label', 'SP'));
+    const pips = el('div', 'sp-pips');
+    for (let i = 0; i < engine.maxSp; i++) {
+      pips.appendChild(el('div', 'sp-pip'));
+    }
+    container.appendChild(pips);
+    container.appendChild(el('span', 'sp-bar-value', ''));
+  }
+
+  const pipEls = container.querySelectorAll<HTMLElement>('.sp-pip');
+  pipEls.forEach((pip, i) => pip.classList.toggle('filled', i < engine.sp));
+  const valueEl = container.querySelector('.sp-bar-value');
+  if (valueEl) valueEl.textContent = `${engine.sp} / ${engine.maxSp}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -259,7 +306,7 @@ let lastPanelSignature = '';
 
 function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, handlers: UiHandlers): void {
   const readyPlayers = engine.characters.filter((c) => c.team === 'player' && c.alive && engine.isReady(c.id));
-  const signature = `${engine.status}|${readyPlayers.map((c) => c.id).join(',')}|${pending ? `${pending.actorId}:${pending.key}` : ''}`;
+  const signature = `${engine.status}|${readyPlayers.map((c) => c.id).join(',')}|${pending ? `${pending.actorId}:${pending.key}` : ''}|sp${engine.sp}`;
   if (signature === lastPanelSignature) return;
   lastPanelSignature = signature;
 
@@ -296,8 +343,11 @@ function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, 
       normalBtn.title = actor.skills.normal.description;
       normalBtn.addEventListener('click', () => handlers.onChooseAction(actor.id, 'normal'));
 
-      const skillBtn = el('button', 'action-btn skill', actor.skills.skill.name);
+      const spCost = actor.skills.skill.spCost ?? 0;
+      const canAffordSkill = engine.sp >= spCost;
+      const skillBtn = el('button', `action-btn skill${canAffordSkill ? '' : ' disabled'}`, `${actor.skills.skill.name} (SP ${spCost})`);
       skillBtn.title = actor.skills.skill.description;
+      skillBtn.disabled = !canAffordSkill;
       skillBtn.addEventListener('click', () => handlers.onChooseAction(actor.id, 'skill'));
 
       btnRow.appendChild(normalBtn);
@@ -366,11 +416,17 @@ function renderOverlay(engine: BattleEngine, handlers: UiHandlers): void {
   resetBtn.onclick = () => handlers.onReset();
 }
 
-export function renderApp(engine: BattleEngine, pending: PendingAction | null, handlers: UiHandlers): void {
+export function renderApp(
+  engine: BattleEngine,
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+): void {
   syncControls(engine);
   renderTurnOrder(engine);
-  renderParty(engine, 'enemy', pending, handlers);
-  renderParty(engine, 'player', pending, handlers);
+  renderSpBar(engine);
+  renderParty(engine, 'enemy', pending, selectedActorId, handlers);
+  renderParty(engine, 'player', pending, selectedActorId, handlers);
   renderActionPanel(engine, pending, handlers);
   renderLog(engine);
   renderOverlay(engine, handlers);

@@ -6,6 +6,9 @@ import { dmgDealtMult, dmgTakenMult, effectiveAtk, effectiveDef, effectiveSpd } 
 export const GAUGE_MAX = 400;
 /** 피격 시 얻는 필살기 에너지 (선딜 없이 피격만으로도 필살기가 채워지도록) */
 const HIT_ENERGY_GAIN = 8;
+/** 아군 전체가 공유하는 SP(스킬 포인트)의 최대치와 시작값 */
+export const MAX_SP = 10;
+const STARTING_SP = 3;
 /** 적 AI가 "생각하는" 시간 범위(ms) — 준비되자마자 즉시 처리되지 않고 눈에 보이도록 하기 위함.
  *  각 캐릭터마다 독립적으로 부여되므로, 나중에 준비된 캐릭터가 먼저 행동할 수도 있다. */
 const ENEMY_THINK_MS_MIN = 450;
@@ -32,10 +35,15 @@ export class BattleEngine implements BattleApi {
   battleTimeMs = 0;
   paused = false;
   timeScale = 1;
+  /** 아군 전체가 공유하는 SP. 스킬 사용에 소모되고 일반공격 등으로 회복된다 (적은 관여하지 않음). */
+  sp = STARTING_SP;
+  maxSp = MAX_SP;
 
   /** 준비된 적 캐릭터마다 독립적으로 흐르는 "생각 시간". 캐릭터별로 따로 카운트되므로
    *  먼저 준비된 적이라도 이 타이머가 늦게 끝나면 나중에 준비된 적에게 행동 순서를 내줄 수 있다. */
   private enemyThinkTimers = new Map<string, number>();
+  /** 대상 선택 중에는 true — 모든 게이지 충전과 적의 행동 진행이 멈춘다 (필살기는 예외). */
+  private targetSelectionPaused = false;
 
   constructor() {
     this.reset();
@@ -47,7 +55,9 @@ export class BattleEngine implements BattleApi {
     this.status = 'ongoing';
     this.logs = [];
     this.battleTimeMs = 0;
+    this.sp = STARTING_SP;
     this.enemyThinkTimers.clear();
+    this.targetSelectionPaused = false;
     this.log('전투 시작!', 'info');
   }
 
@@ -57,6 +67,12 @@ export class BattleEngine implements BattleApi {
 
   setTimeScale(scale: number): void {
     this.timeScale = scale;
+  }
+
+  /** 준비된 캐릭터의 스킬(등) 대상을 고르는 중일 때 true로 설정한다.
+   *  이 동안에는 모든 캐릭터의 행동 게이지 충전과 적의 행동 진행이 멈춘다 — 필살기는 예외로 계속 즉시 사용 가능하다. */
+  setTargetSelectionPaused(paused: boolean): void {
+    this.targetSelectionPaused = paused;
   }
 
   findById(id: string | null | undefined): Character | undefined {
@@ -82,21 +98,25 @@ export class BattleEngine implements BattleApi {
     if (dt <= 0) return;
     this.battleTimeMs += dt;
 
+    // 시간 기반 상태이상(화상/중독/재생 등)은 대상 선택 중에도 턴과 무관하게 계속 흐른다 (규칙 5).
     this.tickTimeBasedStatuses(dt);
     if (this.status !== 'ongoing') return;
 
-    this.chargeGauges(dt);
+    // 대상 선택 중에는 모든 캐릭터의 행동 게이지 충전과 적의 행동 진행이 멈춘다.
+    if (!this.targetSelectionPaused) {
+      this.chargeGauges(dt);
 
-    // 준비된 적들은 각자 독립적인 타이머로 행동한다 (하나가 끝나기를 기다리지 않는다).
-    for (const id of [...this.readyIds]) {
-      const actor = this.findById(id);
-      if (!actor || !actor.alive || actor.team !== 'enemy') continue;
-      const remaining = (this.enemyThinkTimers.get(id) ?? 0) - dt;
-      if (remaining <= 0) {
-        this.enemyThinkTimers.delete(id);
-        this.runEnemyAI(actor);
-      } else {
-        this.enemyThinkTimers.set(id, remaining);
+      // 준비된 적들은 각자 독립적인 타이머로 행동한다 (하나가 끝나기를 기다리지 않는다).
+      for (const id of [...this.readyIds]) {
+        const actor = this.findById(id);
+        if (!actor || !actor.alive || actor.team !== 'enemy') continue;
+        const remaining = (this.enemyThinkTimers.get(id) ?? 0) - dt;
+        if (remaining <= 0) {
+          this.enemyThinkTimers.delete(id);
+          this.runEnemyAI(actor);
+        } else {
+          this.enemyThinkTimers.set(id, remaining);
+        }
       }
     }
 
@@ -164,16 +184,31 @@ export class BattleEngine implements BattleApi {
     if (!actor || !actor.alive) return false;
 
     const skillDef = actor.skills[key];
+
+    // 스킬은 아군 전체가 공유하는 SP를 소모한다 (부족하면 사용 불가).
+    const spCost = key === 'skill' && actor.team === 'player' ? (skillDef.spCost ?? 0) : 0;
+    if (spCost > this.sp) return false;
+
     const targets = this.resolveTargets(actor, skillDef.targetType, targetId);
     if (!targets.length) return false;
 
     this.log(`${actor.name}의 [${skillDef.name}]!`, 'action');
+    if (spCost > 0) {
+      this.sp = Math.max(0, this.sp - spCost);
+    }
     skillDef.execute({ battle: this, actor, targets });
     if (actor.alive) {
       actor.energy = Math.min(actor.maxEnergy, actor.energy + skillDef.energyGain);
+      this.gainSp(actor, skillDef.spGain ?? 0);
     }
     this.finishTurn(actor);
     return true;
+  }
+
+  /** 플레이어 캐릭터의 행동으로 공유 SP를 회복시킨다 (적은 SP 시스템에 관여하지 않는다). */
+  private gainSp(actor: Character, amount: number): void {
+    if (amount <= 0 || actor.team !== 'player') return;
+    this.sp = Math.min(this.maxSp, this.sp + amount);
   }
 
   private finishTurn(actor: Character): void {
@@ -207,6 +242,7 @@ export class BattleEngine implements BattleApi {
     this.log(`💫 ${actor.name}의 필살기 [${skillDef.name}]! (턴 순서와 무관하게 즉시 발동)`, 'ultimate');
     skillDef.execute({ battle: this, actor, targets });
     actor.energy = 0;
+    this.gainSp(actor, skillDef.spGain ?? 0);
     this.checkBattleEnd();
     return true;
   }

@@ -89,6 +89,10 @@ export interface SkillDef {
   description: string;
   targetType: TargetType;
   energyGain: number;
+  /** 아군 전체가 공유하는 SP 중 이 행동을 사용하는 데 필요한 양 (기본 0). 주로 skill 타입에 쓰인다. */
+  spCost?: number;
+  /** 이 행동을 사용하면 공유 SP를 이만큼 회복한다 (기본 0). 일반공격은 보통 1, 일부 캐릭터는 필살기로도 회복한다. */
+  spGain?: number;
   execute: (ctx: ExecuteContext) => void;
 }
 
