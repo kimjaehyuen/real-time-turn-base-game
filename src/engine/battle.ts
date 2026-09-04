@@ -1,6 +1,7 @@
-import type { BattleApi, Character, StatusEffect, StatusTemplate, TargetType } from './types';
+import type { BattleApi, Character, DamageType, StatusEffect, StatusTemplate, TargetType } from './types';
 import { createBattleRoster } from './characters';
-import { dmgDealtMult, dmgTakenMult, effectiveAtk, effectiveDef, effectiveSpd } from './statusEffects';
+import { computeDamage } from './damage';
+import { effectiveAtk, effectiveSpd } from './statusEffects';
 
 /** 이 값만큼 게이지가 차면 턴이 "활성화"된다. spd=100 기준 4초. */
 export const GAUGE_MAX = 400;
@@ -130,10 +131,19 @@ export class BattleEngine implements BattleApi {
           while (s.msSinceLastTick >= s.tick.intervalMs) {
             s.msSinceLastTick -= s.tick.intervalMs;
             const source = this.findById(s.sourceId) ?? c;
-            const amount = Math.max(1, Math.round(effectiveAtk(source) * s.tick.atkMultiplier));
             if (s.tick.isHeal) {
+              const amount = Math.max(1, Math.round(effectiveAtk(source) * s.tick.atkMultiplier));
               this.heal(source, c, amount);
             } else {
+              // 지속피해(도트)는 물리/마법 구분이 없고 속성만 정해져 있다 (예: 화상 -> 화염).
+              const element = s.tick.element ?? source.element;
+              const { amount } = computeDamage({
+                attacker: source,
+                target: c,
+                atkMultiplier: s.tick.atkMultiplier,
+                damageType: 'dot',
+                element,
+              });
               this.applyDotDamage(source, c, amount);
             }
             if (!c.alive) break;
@@ -260,7 +270,26 @@ export class BattleEngine implements BattleApi {
         const t = targetId ? pool.find((c) => c.id === targetId) : pool[0];
         return t ? [t] : [];
       }
+      case 'areaEnemy': {
+        const pool = this.livingEnemies(actor);
+        const primary = targetId ? pool.find((c) => c.id === targetId) : pool[0];
+        return primary ? this.adjacentGroup(primary) : [];
+      }
+      case 'areaAlly': {
+        const pool = this.livingAllies(actor);
+        const primary = targetId ? pool.find((c) => c.id === targetId) : pool[0];
+        return primary ? this.adjacentGroup(primary) : [];
+      }
     }
+  }
+
+  /** 범위 공격: 주 목표 + 원래 진형 순서상 바로 좌우에 있는(살아있는) 대상들. */
+  private adjacentGroup(primary: Character): Character[] {
+    const formation = this.characters.filter((c) => c.team === primary.team);
+    const idx = formation.indexOf(primary);
+    return [formation[idx - 1], formation[idx], formation[idx + 1]].filter(
+      (c): c is Character => !!c && c.alive,
+    );
   }
 
   /** UI가 타겟 선택 시 클릭 가능하게 만들 후보 목록 (단일 타겟류는 대상군 전체를 반환) */
@@ -269,9 +298,11 @@ export class BattleEngine implements BattleApi {
     if (!actor) return [];
     switch (targetType) {
       case 'singleEnemy':
+      case 'areaEnemy':
       case 'allEnemies':
         return this.livingEnemies(actor);
       case 'singleAlly':
+      case 'areaAlly':
       case 'allAllies':
         return this.livingAllies(actor);
       case 'self':
@@ -297,8 +328,10 @@ export class BattleEngine implements BattleApi {
   }
 
   private pickAiTarget(actor: Character, targetType: TargetType): string | undefined {
-    if (targetType !== 'singleEnemy' && targetType !== 'singleAlly') return undefined;
-    const pool = targetType === 'singleEnemy' ? this.livingEnemies(actor) : this.livingAllies(actor);
+    const isEnemyPool = targetType === 'singleEnemy' || targetType === 'areaEnemy';
+    const isAllyPool = targetType === 'singleAlly' || targetType === 'areaAlly';
+    if (!isEnemyPool && !isAllyPool) return undefined;
+    const pool = isEnemyPool ? this.livingEnemies(actor) : this.livingAllies(actor);
     if (!pool.length) return undefined;
     return pool.reduce((a, b) => (a.hp / a.maxHp <= b.hp / b.maxHp ? a : b)).id;
   }
@@ -306,23 +339,16 @@ export class BattleEngine implements BattleApi {
   // -------------------------------------------------------------------------
   // BattleApi 구현 (스킬 execute() 에서 사용하는 헬퍼)
   // -------------------------------------------------------------------------
-  dealDamage(attacker: Character, target: Character, atkMultiplier: number): number {
+  dealDamage(attacker: Character, target: Character, atkMultiplier: number, damageType: DamageType): number {
     if (!target.alive) return 0;
-    const atk = effectiveAtk(attacker);
-    const def = effectiveDef(target);
-    let raw = atk * atkMultiplier - def * 0.5;
-    raw = Math.max(raw, atk * atkMultiplier * 0.15);
-    let dmg = raw * dmgDealtMult(attacker) * dmgTakenMult(target);
-    const isCrit = Math.random() < 0.15;
-    if (isCrit) dmg *= 1.5;
-    dmg *= 0.9 + Math.random() * 0.2;
-    const finalDmg = Math.max(1, Math.round(dmg));
+    // 속성은 공격자 고유값(Character.element)을 그대로 쓴다 — 캐릭터마다 가하는 속성이 고정되어 있다.
+    const { amount } = computeDamage({ attacker, target, atkMultiplier, damageType, element: attacker.element });
 
-    target.hp = Math.max(0, target.hp - finalDmg);
+    target.hp = Math.max(0, target.hp - amount);
     target.energy = Math.min(target.maxEnergy, target.energy + HIT_ENERGY_GAIN);
-    this.recordDamage(attacker.team, finalDmg);
+    this.recordDamage(attacker.team, amount);
     this.handlePossibleDeath(target);
-    return finalDmg;
+    return amount;
   }
 
   private applyDotDamage(source: Character, target: Character, amount: number): void {
