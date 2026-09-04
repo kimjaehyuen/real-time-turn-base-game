@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:," />
+    <title>실시간 턴제 전투 데모</title>
+  </head>
+  <body>
+    <section id="screen-title" class="screen title-screen">
+      <div class="title-logo">Real - Time</div>
+      <div class="title-sub">실시간 턴제 전투 데모</div>
+      <button id="btn-start" class="ctrl-btn start-btn">게임 시작</button>
+    </section>
+
+    <section id="screen-party" class="screen party-screen" hidden>
+      <h2>파티 편성</h2>
+      <p class="party-hint">함께 싸울 캐릭터를 선택하세요 (최소 1명, 최대 4명)</p>
+      <div class="party-select-grid" id="party-select-grid"></div>
+      <button id="btn-start-battle" class="ctrl-btn start-btn" disabled>전투 시작</button>
+    </section>
+
+    <section id="screen-stage" class="screen stage-screen" hidden>
+      <div class="stage-title" id="stage-title">STAGE 1</div>
+    </section>
+
+    <div id="screen-battle" class="screen" hidden>
+      <div id="app">
+        <div class="dmg-indicator dmg-indicator-right" id="dmg-right" hidden></div>
+        <div class="dmg-indicator dmg-indicator-left" id="dmg-left" hidden></div>
+
+        <header class="topbar">
+          <h1>⚔️ 실시간 턴제 전투 데모</h1>
+          <div class="controls">
+            <button id="btn-pause" class="ctrl-btn">일시정지</button>
+            <div class="speed-group" id="speed-group">
+              <button class="ctrl-btn speed-btn active" data-speed="1">x1</button>
+              <button class="ctrl-btn speed-btn" data-speed="2">x2</button>
+              <button class="ctrl-btn speed-btn" data-speed="4">x4</button>
+            </div>
+            <button id="btn-reset" class="ctrl-btn reset">전투 재시작</button>
+          </div>
+        </header>
+
+        <section class="sp-bar" id="sp-bar"></section>
+
+        <div class="keyboard-hint">⌨ 캐릭터를 클릭해 선택 · Q 일반공격 · E 스킬 · 필살기 준비되면 1-4로 즉시 사용</div>
+
+        <main class="battlefield">
+          <div class="party enemy-party" id="enemy-party"></div>
+          <div class="vs-divider">VS</div>
+          <div class="party player-party" id="player-party"></div>
+
+          <div class="action-panel" id="action-panel"></div>
+        </main>
+      </div>
+
+      <div class="overlay" id="overlay" hidden>
+        <div class="overlay-box">
+          <div class="overlay-title" id="overlay-title"></div>
+          <button class="ctrl-btn reset" id="overlay-reset">다시 시작</button>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
