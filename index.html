@@ -10,7 +10,36 @@
     <section id="screen-title" class="screen title-screen">
       <div class="title-logo">Real - Time</div>
       <div class="title-sub">실시간 턴제 전투 데모</div>
-      <button id="btn-start" class="ctrl-btn start-btn">게임 시작</button>
+      <div class="title-actions">
+        <button id="btn-start" class="ctrl-btn start-btn">게임 시작</button>
+        <button id="btn-open-settings" class="ctrl-btn">설정</button>
+      </div>
+    </section>
+
+    <section id="screen-settings" class="screen settings-screen" hidden>
+      <h2>설정</h2>
+      <label class="settings-toggle">
+        <input type="checkbox" id="setting-hardmode" />
+        <span>하드 모드 — 행동/대상을 준비하는 동안에도 게임이 멈추지 않습니다</span>
+      </label>
+
+      <div class="settings-keybinds">
+        <div class="keybind-row">
+          <span class="keybind-label">일반 공격</span>
+          <button type="button" class="keybind-btn" id="keybind-normal">W</button>
+        </div>
+        <div class="keybind-row">
+          <span class="keybind-label">스킬</span>
+          <button type="button" class="keybind-btn" id="keybind-skill">E</button>
+        </div>
+        <div class="keybind-row">
+          <span class="keybind-label">필살기</span>
+          <button type="button" class="keybind-btn" id="keybind-ultimate">Q</button>
+        </div>
+      </div>
+      <p class="settings-hint">키 버튼을 클릭한 뒤 원하는 키를 누르면 변경됩니다. (Esc로 취소)</p>
+
+      <button id="btn-settings-back" class="ctrl-btn">뒤로</button>
     </section>
 
     <section id="screen-party" class="screen party-screen" hidden>
@@ -44,7 +73,7 @@
 
         <section class="sp-bar" id="sp-bar"></section>
 
-        <div class="keyboard-hint">⌨ 캐릭터를 클릭해 선택 · Q 일반공격 · E 스킬 · 필살기 준비되면 1-4로 즉시 사용</div>
+        <div class="keyboard-hint" id="keyboard-hint"></div>
 
         <main class="battlefield">
           <div class="party enemy-party" id="enemy-party"></div>

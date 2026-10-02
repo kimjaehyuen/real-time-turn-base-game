@@ -88,6 +88,93 @@ body {
   border-color: var(--border);
   color: var(--text-dim);
 }
+.title-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.settings-screen {
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 40px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 18px;
+  min-height: 100vh;
+  justify-content: center;
+}
+.settings-screen h2 {
+  font-size: 24px;
+  margin: 0;
+  text-align: center;
+}
+.settings-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.settings-toggle input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--sp);
+}
+.settings-keybinds {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.keybind-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px 14px;
+}
+.keybind-label {
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.keybind-btn {
+  min-width: 96px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.5px;
+  transition: border-color 0.15s, background 0.15s;
+}
+.keybind-btn:hover {
+  border-color: var(--atb);
+}
+.keybind-btn.listening {
+  background: var(--atb);
+  border-color: var(--atb);
+  color: #071224;
+  animation: stage-in 0.3s ease-out;
+}
+.settings-hint {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--text-dim);
+  text-align: center;
+}
 
 .stage-title {
   font-size: 56px;
