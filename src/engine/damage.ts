@@ -6,6 +6,7 @@ import {
   dmgTakenMult,
   effectiveAtk,
   effectiveDef,
+  effectiveResistances,
   elementDmgDealtIncrease,
   elementDmgTakenIncrease,
   finalDmgIncrease,
@@ -28,10 +29,12 @@ function defenseCoefficient(target: Character): number {
   return 100 / (100 + effectiveDef(target));
 }
 
-/** 물리|마법 내성과 속성 내성은 합연산으로 더해진다. 도트(dot)는 물리/마법 구분이 없다. */
+/** 물리|마법 내성과 속성 내성은 합연산으로 더해진다. 도트(dot)는 물리/마법 구분이 없다.
+ *  제압 중인 대상은 effectiveResistances()가 전부 0으로 돌려준다. */
 function resistanceFraction(target: Character, damageType: DamageType | 'dot', element: Element): number {
-  const typeResist = damageType === 'physical' ? target.resistances.physical : damageType === 'magical' ? target.resistances.magical : 0;
-  const elementResist = target.resistances.elements[element] ?? 0;
+  const resistances = effectiveResistances(target);
+  const typeResist = damageType === 'physical' ? resistances.physical : damageType === 'magical' ? resistances.magical : 0;
+  const elementResist = resistances.elements[element] ?? 0;
   return typeResist + elementResist;
 }
 

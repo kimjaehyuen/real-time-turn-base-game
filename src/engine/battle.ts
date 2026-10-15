@@ -10,10 +10,18 @@ const HIT_ENERGY_GAIN = 8;
 /** 아군 전체가 공유하는 SP(스킬 포인트)의 최대치와 시작값 */
 export const MAX_SP = 10;
 const STARTING_SP = 3;
-/** 적 AI가 "생각하는" 시간 범위(ms) — 준비되자마자 즉시 처리되지 않고 눈에 보이도록 하기 위함.
- *  각 캐릭터마다 독립적으로 부여되므로, 나중에 준비된 캐릭터가 먼저 행동할 수도 있다. */
-const ENEMY_THINK_MS_MIN = 450;
-const ENEMY_THINK_MS_MAX = 950;
+/** 적 AI가 "생각하는" 시간(ms) — 행동 게이지가 가득 찬 뒤 실제로 행동하기까지의 고정 지연.
+ *  하드 모드에서는 더 짧아진다 (적이 더 빠르게 공격한다) — main.ts가 setEnemyActionDelayMs()로 지정. */
+export const ENEMY_ACTION_DELAY_NORMAL_MS = 1000;
+export const ENEMY_ACTION_DELAY_HARD_MS = 500;
+/** 제압이 발동했을 때 행동불능 상태가 지속되는 시간(ms) */
+export const SUPPRESSION_DURATION_MS = 4000;
+/** 제압된 적이 아니더라도, 적이 행동을 마칠 때마다 제압 게이지가 이만큼 회복된다. */
+const SUPPRESSION_REGEN_PER_ACTION = 15;
+/** 대상의 행동 게이지가 가득 찬 상태에서 적중시키면 제압 게이지 소모량이 이 배수로 적용된다. */
+const SUPPRESSION_READY_HIT_MULTIPLIER = 5;
+/** 위 상황에서 추가로 대상의 행동 게이지를 이 비율만큼 깎는다 (0.5 = 50% 감소). */
+const SUPPRESSION_READY_HIT_GAUGE_CUT = 0.5;
 
 export type BattleStatus = 'ongoing' | 'player_win' | 'enemy_win';
 
@@ -39,6 +47,8 @@ export class BattleEngine implements BattleApi {
   private enemyThinkTimers = new Map<string, number>();
   /** 대상 선택 중에는 true — 모든 게이지 충전과 적의 행동 진행이 멈춘다 (필살기는 예외). */
   private targetSelectionPaused = false;
+  /** 적이 행동 게이지가 가득 찬 뒤 실제로 행동하기까지 걸리는 고정 시간. 하드 모드면 더 짧다. */
+  private enemyActionDelayMs = ENEMY_ACTION_DELAY_NORMAL_MS;
 
   /** 파티 편성 화면에서 선택된 아군 키 목록으로 전투를 (재)시작한다. */
   reset(selectedPlayerKeys: string[]): void {
@@ -67,6 +77,12 @@ export class BattleEngine implements BattleApi {
     this.targetSelectionPaused = paused;
   }
 
+  /** 적이 행동 게이지가 가득 찬 뒤 실제로 행동하기까지 걸리는 고정 지연 시간을 바꾼다
+   *  (하드 모드 여부에 따라 main.ts가 호출 — 하드 모드일수록 적이 더 빠르게 공격한다). */
+  setEnemyActionDelayMs(ms: number): void {
+    this.enemyActionDelayMs = ms;
+  }
+
   findById(id: string | null | undefined): Character | undefined {
     if (!id) return undefined;
     return this.characters.find((c) => c.id === id);
@@ -90,11 +106,12 @@ export class BattleEngine implements BattleApi {
     if (dt <= 0) return;
     this.battleTimeMs += dt;
 
-    // 대상 선택 중에는 게이지 충전/적 행동뿐 아니라 턴/시간 기반 버프·디버프의 지속시간도 함께 멈춘다.
+    // 대상 선택 중에는 게이지 충전/적 행동뿐 아니라 턴/시간 기반 버프·디버프의 지속시간, 제압 지속시간도 함께 멈춘다.
     if (!this.targetSelectionPaused) {
       this.tickTimeBasedStatuses(dt);
       if (this.status !== 'ongoing') return;
 
+      this.tickSuppression(dt);
       this.chargeGauges(dt);
 
       // 준비된 적들은 각자 독립적인 타이머로 행동한다 (하나가 끝나기를 기다리지 않는다).
@@ -112,10 +129,23 @@ export class BattleEngine implements BattleApi {
     }
 
     // 필살기는 게이지/준비 상태와 무관하게, 자신의 턴이 아니어도 에너지가 차면 즉시 사용 가능.
-    // (플레이어 캐릭터는 UI 버튼으로 직접 트리거하고, 적은 자동으로 즉시 사용한다)
+    // (플레이어 캐릭터는 UI 버튼으로 직접 트리거하고, 적은 자동으로 즉시 사용한다. 제압되어 행동불능인
+    // 동안에는 필살기도 사용할 수 없다 — "행동불능"에는 예외가 없다)
     for (const c of this.characters) {
-      if (c.alive && c.team === 'enemy' && c.energy >= c.maxEnergy) {
+      if (c.alive && !c.suppressed && c.team === 'enemy' && c.energy >= c.maxEnergy) {
         this.runEnemyUltimateAI(c);
+      }
+    }
+  }
+
+  /** 제압된 캐릭터의 남은 행동불능 시간을 줄이고, 0이 되면 제압을 해제한다. */
+  private tickSuppression(dt: number): void {
+    for (const c of this.characters) {
+      if (!c.alive || !c.suppressed) continue;
+      c.suppressedRemainingMs -= dt;
+      if (c.suppressedRemainingMs <= 0) {
+        c.suppressed = false;
+        c.suppressedRemainingMs = 0;
       }
     }
   }
@@ -159,16 +189,24 @@ export class BattleEngine implements BattleApi {
 
   private chargeGauges(dt: number): void {
     for (const c of this.characters) {
-      if (!c.alive) continue;
+      if (!c.alive || c.suppressed) continue; // 제압되어 행동불능인 동안에는 게이지가 차지 않는다
       if (this.readyIds.includes(c.id)) continue;
       c.gauge += (effectiveSpd(c) * dt) / 1000;
       if (c.gauge >= GAUGE_MAX) {
         c.gauge = GAUGE_MAX;
         this.readyIds.push(c.id);
         if (c.team === 'enemy') {
-          this.enemyThinkTimers.set(c.id, ENEMY_THINK_MS_MIN + Math.random() * (ENEMY_THINK_MS_MAX - ENEMY_THINK_MS_MIN));
+          this.enemyThinkTimers.set(c.id, this.enemyActionDelayMs);
         }
       }
+    }
+  }
+
+  /** 게이지가 가득 찬 상태에서 벗어나면(제압 보너스로 깎이는 등) readyIds/생각 타이머에서 제외한다. */
+  private revokeReadyIfNeeded(c: Character): void {
+    if (c.gauge < GAUGE_MAX && this.readyIds.includes(c.id)) {
+      this.readyIds = this.readyIds.filter((id) => id !== c.id);
+      this.enemyThinkTimers.delete(c.id);
     }
   }
 
@@ -186,7 +224,7 @@ export class BattleEngine implements BattleApi {
     if (this.status !== 'ongoing') return false;
     if (!this.readyIds.includes(actorId)) return false;
     const actor = this.findById(actorId);
-    if (!actor || !actor.alive) return false;
+    if (!actor || !actor.alive || actor.suppressed) return false;
 
     const skillDef = actor.skills[key];
 
@@ -227,7 +265,14 @@ export class BattleEngine implements BattleApi {
     actor.gauge = 0;
     this.readyIds = this.readyIds.filter((id) => id !== actor.id);
     this.enemyThinkTimers.delete(actor.id);
+    this.regenSuppression(actor);
     this.checkBattleEnd();
+  }
+
+  /** 적이 행동(일반공격/스킬/필살기)을 마칠 때마다 제압 게이지를 일정량 회복시킨다. */
+  private regenSuppression(actor: Character): void {
+    if (actor.team !== 'enemy' || !actor.alive) return;
+    actor.suppressionGauge = Math.min(actor.maxSuppressionGauge, actor.suppressionGauge + SUPPRESSION_REGEN_PER_ACTION);
   }
 
   // -------------------------------------------------------------------------
@@ -237,7 +282,7 @@ export class BattleEngine implements BattleApi {
   performUltimate(actorId: string, targetId?: string): boolean {
     if (this.status !== 'ongoing') return false;
     const actor = this.findById(actorId);
-    if (!actor || !actor.alive) return false;
+    if (!actor || !actor.alive || actor.suppressed) return false;
     if (actor.energy < actor.maxEnergy) return false;
 
     const skillDef = actor.skills.ultimate;
@@ -248,6 +293,7 @@ export class BattleEngine implements BattleApi {
     skillDef.execute({ battle: this, actor, targets });
     actor.energy = 0;
     this.gainSp(actor, skillDef.spGain ?? 0);
+    this.regenSuppression(actor);
     this.checkBattleEnd();
     return true;
   }
@@ -349,6 +395,33 @@ export class BattleEngine implements BattleApi {
     this.recordDamage(attacker.team, amount);
     this.handlePossibleDeath(target);
     return amount;
+  }
+
+  /** 제압 게이지를 소모시킨다. 대상의 행동 게이지가 가득 찬("행동 준비됨") 상태에서 맞히면
+   *  5배로 적용되고, 그 대신 대상의 행동 게이지도 50% 깎인다(= 그 적의 턴을 지연시킨다). */
+  applySuppression(target: Character, baseAmount: number): void {
+    if (!target.alive || baseAmount <= 0 || target.suppressed) return;
+    const hitWhileReady = this.isReady(target.id);
+    const amount = hitWhileReady ? baseAmount * SUPPRESSION_READY_HIT_MULTIPLIER : baseAmount;
+    target.suppressionGauge = Math.max(0, target.suppressionGauge - amount);
+    if (hitWhileReady) {
+      target.gauge = Math.max(0, target.gauge * (1 - SUPPRESSION_READY_HIT_GAUGE_CUT));
+      this.revokeReadyIfNeeded(target);
+    }
+    if (target.suppressionGauge <= 0) {
+      this.triggerSuppression(target);
+    }
+  }
+
+  /** 제압 발동: 일정 시간 행동불능 상태로 만들고(내성은 effectiveResistances()가 0으로 취급),
+   *  제압 게이지는 다시 가득 채워 넣는다 — 다음 제압을 위해서는 또 처음부터 소모시켜야 한다. */
+  private triggerSuppression(target: Character): void {
+    target.suppressed = true;
+    target.suppressedRemainingMs = SUPPRESSION_DURATION_MS;
+    target.suppressionGauge = target.maxSuppressionGauge;
+    target.gauge = 0;
+    this.readyIds = this.readyIds.filter((id) => id !== target.id);
+    this.enemyThinkTimers.delete(target.id);
   }
 
   private applyDotDamage(source: Character, target: Character, amount: number): void {

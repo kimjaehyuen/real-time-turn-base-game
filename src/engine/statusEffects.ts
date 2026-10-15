@@ -1,4 +1,4 @@
-import type { Character, Element, StatModifiers, StatusTemplate } from './types';
+import type { Character, Element, Resistances, StatModifiers, StatusTemplate } from './types';
 
 // ---- 버프/디버프 템플릿 모음 ----
 // durationType: 'turn'  -> 소유자의 턴이 끝날 때마다 1씩 감소
@@ -130,6 +130,13 @@ export function dmgDealtMult(c: Character): number {
 
 export function dmgTakenMult(c: Character): number {
   return Math.max(0, 1 + sumModifier(c.statuses, 'dmgTakenMult'));
+}
+
+const ZERO_RESISTANCES: Resistances = { physical: 0, magical: 0, elements: {} };
+
+/** 제압 중인 캐릭터는 모든 기초 내성이 0으로 취급된다. */
+export function effectiveResistances(c: Character): Resistances {
+  return c.suppressed ? ZERO_RESISTANCES : c.resistances;
 }
 
 // ---------------------------------------------------------------------------

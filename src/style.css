@@ -543,6 +543,13 @@ body {
   border-color: var(--sp);
   box-shadow: 0 0 0 3px rgba(100, 224, 200, 0.5), var(--shadow);
 }
+.char-card.suppressed {
+  border-color: var(--enemy);
+  filter: saturate(0.55);
+}
+.char-card.suppressed .portrait {
+  filter: grayscale(0.6);
+}
 
 @keyframes pulse-active {
   0%, 100% { box-shadow: 0 0 0 2px var(--energy), var(--shadow); }
@@ -631,6 +638,12 @@ body {
 }
 .energy-fill {
   background: linear-gradient(90deg, var(--energy), #ffe27a);
+}
+.suppression-fill {
+  background: linear-gradient(90deg, var(--debuff), #f0a6ff);
+}
+.suppression-fill.active {
+  background: linear-gradient(90deg, var(--enemy), #ffb199);
 }
 
 .status-row {

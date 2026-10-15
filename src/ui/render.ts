@@ -1,4 +1,4 @@
-import { BattleEngine, GAUGE_MAX } from '../engine/battle';
+import { BattleEngine, GAUGE_MAX, SUPPRESSION_DURATION_MS } from '../engine/battle';
 import type { Character, StatusEffect } from '../engine/types';
 import type { PendingAction, UiHandlers } from './types';
 
@@ -81,6 +81,9 @@ interface CardHandle {
   atbLabel: HTMLElement;
   energyFill: HTMLElement;
   energyLabel: HTMLElement;
+  /** 제압 게이지 바 — 적 카드에만 존재한다 (아군은 아직 제압당할 수 없어 표시하지 않는다). */
+  suppressionFill: HTMLElement | null;
+  suppressionLabel: HTMLElement | null;
   ultSlot: HTMLElement;
   slotKeyEl: HTMLElement | null;
   turnBadgeEl: HTMLElement | null;
@@ -175,6 +178,16 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
   const energy = buildBar('필살기', 'energy');
   root.appendChild(energy.wrap);
 
+  // 제압 게이지는 적 카드에만 보여준다 (현재 이 게임에서 제압당할 수 있는 쪽은 적뿐이다).
+  let suppressionFill: HTMLElement | null = null;
+  let suppressionLabel: HTMLElement | null = null;
+  if (c.team === 'enemy') {
+    const suppression = buildBar('제압', 'suppression');
+    root.appendChild(suppression.wrap);
+    suppressionFill = suppression.fill;
+    suppressionLabel = suppression.labelEl;
+  }
+
   // 상태 표시줄은 비어 있어도 항상 만들어 둔다: 상태이상이 붙고 떨어질 때마다 이 칸이
   // 나타났다 사라지면 같은 줄의 다른 카드들 높이가 흔들려, 그 순간 클릭 중이던 카드가
   // 화면에서 살짝 밀려나며 클릭이 빗나갈 수 있다.
@@ -206,6 +219,8 @@ function buildCard(engine: BattleEngine, c: Character, pending: PendingAction | 
     atbLabel: atb.labelEl,
     energyFill: energy.fill,
     energyLabel: energy.labelEl,
+    suppressionFill,
+    suppressionLabel,
     ultSlot,
     slotKeyEl,
     turnBadgeEl,
@@ -221,7 +236,7 @@ function updateCardDynamics(engine: BattleEngine, c: Character, handle: CardHand
   handle.hpLabel.textContent = `HP · ${Math.max(0, Math.round(c.hp))} / ${c.maxHp}`;
 
   const gaugePct = Math.max(0, Math.min(100, (c.gauge / GAUGE_MAX) * 100));
-  const gaugeText = engine.isReady(c.id) ? '행동 대기' : '충전 중';
+  const gaugeText = c.suppressed ? '행동불능' : engine.isReady(c.id) ? '행동 대기' : '충전 중';
   handle.atbFill.style.width = `${gaugePct}%`;
   handle.atbLabel.textContent = `ATB · ${gaugeText}`;
 
@@ -229,6 +244,23 @@ function updateCardDynamics(engine: BattleEngine, c: Character, handle: CardHand
   const ultReady = c.energy >= c.maxEnergy;
   handle.energyFill.style.width = `${energyPct}%`;
   handle.energyLabel.textContent = `필살기 · ${Math.floor(energyPct)}%`;
+
+  // 제압 게이지: 평소에는 "얼마나 모아야 제압되는지"를, 제압된 동안에는 "얼마나 남았는지"를 보여준다.
+  if (handle.suppressionFill && handle.suppressionLabel) {
+    if (c.suppressed) {
+      const remainPct = Math.max(0, Math.min(100, (c.suppressedRemainingMs / SUPPRESSION_DURATION_MS) * 100));
+      handle.suppressionFill.style.width = `${remainPct}%`;
+      handle.suppressionLabel.textContent = `제압 중 · ${Math.max(0, c.suppressedRemainingMs / 1000).toFixed(1)}초`;
+    } else {
+      const gaugePctSuppression =
+        c.maxSuppressionGauge > 0 ? Math.max(0, Math.min(100, (c.suppressionGauge / c.maxSuppressionGauge) * 100)) : 0;
+      handle.suppressionFill.style.width = `${gaugePctSuppression}%`;
+      handle.suppressionLabel.textContent = `제압 게이지 · ${Math.floor(gaugePctSuppression)}%`;
+    }
+    handle.suppressionFill.classList.toggle('active', c.suppressed);
+  }
+
+  handle.root.classList.toggle('suppressed', c.suppressed);
 
   // 상태이상 칩을 diff한다: 사라진 것만 지우고, 새로 생긴 것만 추가하고, 나머지는 남은시간만 갱신한다.
   const currentIds = new Set(c.statuses.map((s) => s.id));
@@ -359,9 +391,15 @@ function renderSpBar(engine: BattleEngine): void {
 // ---------------------------------------------------------------------------
 let lastPanelSignature = '';
 
-function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, selectedActorId: string | null, handlers: UiHandlers): void {
+function renderActionPanel(
+  engine: BattleEngine,
+  pending: PendingAction | null,
+  selectedActorId: string | null,
+  handlers: UiHandlers,
+  keyLabels: { normal: string; skill: string },
+): void {
   const selected = selectedActorId ? engine.findById(selectedActorId) : undefined;
-  const signature = `${engine.status}|${selected?.id ?? ''}|${pending ? `${pending.actorId}:${pending.key}` : ''}|sp${engine.sp}`;
+  const signature = `${engine.status}|${selected?.id ?? ''}|${pending ? `${pending.actorId}:${pending.key}` : ''}|sp${engine.sp}|${keyLabels.normal}|${keyLabels.skill}`;
   if (signature === lastPanelSignature) return;
   lastPanelSignature = signature;
 
@@ -394,7 +432,9 @@ function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, 
 
   panel.appendChild(el('div', 'ready-actor-name', `${selected.portrait} ${selected.name}`));
   const btnRow = el('div', 'action-buttons');
-  const normalBtn = el('button', 'action-btn', `${selected.skills.normal.name} (Q)`);
+  const normalKey = keyLabels.normal.length === 1 ? keyLabels.normal.toUpperCase() : keyLabels.normal;
+  const skillKey = keyLabels.skill.length === 1 ? keyLabels.skill.toUpperCase() : keyLabels.skill;
+  const normalBtn = el('button', 'action-btn', `${selected.skills.normal.name} (${normalKey})`);
   normalBtn.title = selected.skills.normal.description;
   normalBtn.addEventListener('click', () => handlers.onChooseAction(selected.id, 'normal'));
 
@@ -403,7 +443,7 @@ function renderActionPanel(engine: BattleEngine, pending: PendingAction | null, 
   const skillBtn = el(
     'button',
     `action-btn skill${canAffordSkill ? '' : ' disabled'}`,
-    `${selected.skills.skill.name} (E · SP ${spCost})`,
+    `${selected.skills.skill.name} (${skillKey} · SP ${spCost})`,
   );
   skillBtn.title = selected.skills.skill.description;
   skillBtn.disabled = !canAffordSkill;
@@ -442,13 +482,14 @@ export function renderApp(
   pending: PendingAction | null,
   selectedActorId: string | null,
   handlers: UiHandlers,
+  keyLabels: { normal: string; skill: string },
 ): void {
   syncControls(engine);
   renderSpBar(engine);
   renderDamageIndicators(engine);
   renderParty(engine, 'enemy', pending, selectedActorId, handlers);
   renderParty(engine, 'player', pending, selectedActorId, handlers);
-  renderActionPanel(engine, pending, selectedActorId, handlers);
+  renderActionPanel(engine, pending, selectedActorId, handlers, keyLabels);
   renderOverlay(engine, handlers);
 }
 

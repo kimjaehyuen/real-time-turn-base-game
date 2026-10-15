@@ -1,5 +1,5 @@
 import './style.css';
-import { BattleEngine } from './engine/battle';
+import { BattleEngine, ENEMY_ACTION_DELAY_HARD_MS, ENEMY_ACTION_DELAY_NORMAL_MS } from './engine/battle';
 import { PLAYER_CHARACTER_DEFS } from './engine/characters';
 import { renderApp, resetUiCaches } from './ui/render';
 import { renderPartySelect } from './ui/partyScreen';
@@ -55,6 +55,11 @@ function setPending(next: PendingAction | null): void {
   pending = next;
 }
 
+/** 하드 모드 여부에 맞춰 "적이 행동 게이지가 다 찬 뒤 실제로 공격하기까지" 걸리는 지연을 엔진에 반영한다. */
+function syncEnemyActionDelay(): void {
+  engine.setEnemyActionDelayMs(settings.hardMode ? ENEMY_ACTION_DELAY_HARD_MS : ENEMY_ACTION_DELAY_NORMAL_MS);
+}
+
 function execute(actorId: string, key: ActionKey, targetId?: string): void {
   if (key === 'ultimate') engine.performUltimate(actorId, targetId);
   else engine.performAction(actorId, key, targetId);
@@ -102,11 +107,12 @@ function renderBattle(): void {
     if (!actor || !actor.alive || !engine.isReady(actor.id)) selectedActorId = null;
   }
   syncPause();
-  renderApp(engine, pending, selectedActorId, handlers);
+  renderApp(engine, pending, selectedActorId, handlers, { normal: settings.keyNormal, skill: settings.keySkill });
 }
 
 function restartBattle(): void {
   engine.reset(lastPartyKeys);
+  syncEnemyActionDelay();
   setPending(null);
   selectedActorId = null;
   resetUiCaches();
@@ -144,6 +150,7 @@ document.getElementById('btn-start-battle')!.addEventListener('click', () => {
   showScreen('stage');
   setTimeout(() => {
     engine.reset(lastPartyKeys);
+    syncEnemyActionDelay();
     setPending(null);
     selectedActorId = null;
     resetUiCaches();
@@ -221,6 +228,7 @@ document.getElementById('setting-hardmode')!.addEventListener('change', (e) => {
   saveSettings(settings);
   renderKeyboardHint();
   syncPause();
+  syncEnemyActionDelay();
 });
 (['normal', 'skill', 'ultimate'] as const).forEach((action) => {
   document.getElementById(KEYBIND_BTN_IDS[action])!.addEventListener('click', () => {

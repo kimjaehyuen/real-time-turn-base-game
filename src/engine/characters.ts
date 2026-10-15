@@ -23,6 +23,8 @@ function nextId(prefix: string): string {
 const DEFAULT_CRIT = { critRate: 0.15, critDamage: 1.5 };
 /** 아직 특별한 내성이 없는 캐릭터(현재 아군 전원)가 쓰는 값 */
 const NO_RESIST: Resistances = { physical: 0, magical: 0, elements: {} };
+/** 모든 캐릭터의 제압 게이지 최대치 */
+const MAX_SUPPRESSION_GAUGE = 100;
 
 // ---------------------------------------------------------------------------
 // 전사 브란 (Warrior) — 균형형, 턴 기반 버프/디버프를 사용. 속성: 바위(대지), 전부 물리 피해.
@@ -33,38 +35,44 @@ function warriorSkills(): Character['skills'] {
     id: 'warrior_normal',
     name: '일반 공격',
     type: 'normal',
-    description: '적 1명에게 물리 피해를 입힙니다. SP를 1 회복합니다.',
+    description: '적 1명에게 물리 피해를 입힙니다. SP를 1 회복합니다. (제압 게이지 10 소모)',
     targetType: 'singleEnemy',
     energyGain: 15,
     spGain: 1,
+    suppressionDamage: 10,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 1.0, dmgType);
+      battle.applySuppression(targets[0], 10);
     },
   };
   const skill: SkillDef = {
     id: 'warrior_skill',
     name: '방패 강타',
     type: 'skill',
-    description: 'SP 1을 소모해 적 1명에게 물리 피해를 입히고 방어를 무너뜨리며, 자신은 철벽 태세에 들어갑니다. (턴 기반 지속시간)',
+    description: 'SP 1을 소모해 적 1명에게 물리 피해를 입히고 방어를 무너뜨리며, 자신은 철벽 태세에 들어갑니다. (턴 기반 지속시간, 제압 게이지 20 소모)',
     targetType: 'singleEnemy',
     energyGain: 20,
     spCost: 1,
+    suppressionDamage: 20,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 1.2, dmgType);
       battle.applyStatus(targets[0], ArmorBreak, actor);
       battle.applyStatus(actor, IronWall, actor);
+      battle.applySuppression(targets[0], 20);
     },
   };
   const ultimate: SkillDef = {
     id: 'warrior_ultimate',
     name: '파괴의 일격',
     type: 'ultimate',
-    description: '자신의 턴이 아니어도 즉시 발동. 적 1명에게 압도적인 물리 피해를 입히고 피해의 일부만큼 회복합니다.',
+    description: '자신의 턴이 아니어도 즉시 발동. 적 1명에게 압도적인 물리 피해를 입히고 피해의 일부만큼 회복합니다. (제압 게이지 35 소모)',
     targetType: 'singleEnemy',
     energyGain: 0,
+    suppressionDamage: 35,
     execute: ({ battle, actor, targets }) => {
       const dmg = battle.dealDamage(actor, targets[0], 2.4, dmgType);
       battle.heal(actor, actor, Math.round(dmg * 0.15));
+      battle.applySuppression(targets[0], 35);
     },
   };
   return { normal, skill, ultimate };
@@ -79,26 +87,30 @@ function mageSkills(): Character['skills'] {
     id: 'mage_normal',
     name: '일반 공격',
     type: 'normal',
-    description: '적 1명에게 화염 마법 피해를 입힙니다. SP를 1 회복합니다.',
+    description: '적 1명에게 화염 마법 피해를 입힙니다. SP를 1 회복합니다. (제압 게이지 10 소모)',
     targetType: 'singleEnemy',
     energyGain: 15,
     spGain: 1,
+    suppressionDamage: 10,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 0.9, dmgType);
+      battle.applySuppression(targets[0], 10);
     },
   };
   const skill: SkillDef = {
     id: 'mage_skill',
     name: '화염구',
     type: 'skill',
-    description: 'SP 2를 소모해 적 전체에게 화염 마법 피해를 입히고 화상을 부여합니다. (시간 기반 지속시간, 매초 화염 도트 피해)',
+    description: 'SP 2를 소모해 적 전체에게 화염 마법 피해를 입히고 화상을 부여합니다. (시간 기반 지속시간, 매초 화염 도트 피해, 대상마다 제압 게이지 20 소모)',
     targetType: 'allEnemies',
     energyGain: 20,
     spCost: 2,
+    suppressionDamage: 20,
     execute: ({ battle, actor, targets }) => {
       for (const t of targets) {
         battle.dealDamage(actor, t, 0.7, dmgType);
         battle.applyStatus(t, Burn, actor);
+        battle.applySuppression(t, 20);
       }
     },
   };
@@ -106,12 +118,14 @@ function mageSkills(): Character['skills'] {
     id: 'mage_ultimate',
     name: '메테오',
     type: 'ultimate',
-    description: '자신의 턴이 아니어도 즉시 발동. 적 전체에게 강력한 화염 마법 피해를 입힙니다.',
+    description: '자신의 턴이 아니어도 즉시 발동. 적 전체에게 강력한 화염 마법 피해를 입힙니다. (대상마다 제압 게이지 35 소모)',
     targetType: 'allEnemies',
     energyGain: 0,
+    suppressionDamage: 35,
     execute: ({ battle, actor, targets }) => {
       for (const t of targets) {
         battle.dealDamage(actor, t, 1.5, dmgType);
+        battle.applySuppression(t, 35);
       }
     },
   };
@@ -127,12 +141,14 @@ function healerSkills(): Character['skills'] {
     id: 'healer_normal',
     name: '일반 공격',
     type: 'normal',
-    description: '적 1명에게 약한 광휘 마법 피해를 입힙니다. SP를 1 회복합니다.',
+    description: '적 1명에게 약한 광휘 마법 피해를 입힙니다. SP를 1 회복합니다. (제압 게이지 10 소모)',
     targetType: 'singleEnemy',
     energyGain: 15,
     spGain: 1,
+    suppressionDamage: 10,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 0.7, dmgType);
+      battle.applySuppression(targets[0], 10);
     },
   };
   const skill: SkillDef = {
@@ -179,35 +195,41 @@ function assassinSkills(): Character['skills'] {
     id: 'assassin_normal',
     name: '일반 공격',
     type: 'normal',
-    description: '적 1명에게 물리 피해를 입힙니다. SP를 1 회복합니다.',
+    description: '적 1명에게 물리 피해를 입힙니다. SP를 1 회복합니다. (제압 게이지 10 소모)',
     targetType: 'singleEnemy',
     energyGain: 15,
     spGain: 1,
+    suppressionDamage: 10,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 1.0, dmgType);
+      battle.applySuppression(targets[0], 10);
     },
   };
   const skill: SkillDef = {
     id: 'assassin_skill',
     name: '그림자 일격',
     type: 'skill',
-    description: 'SP를 소모하지 않고 즉시 사용할 수 있는 기습기. 적 1명에게 강한 물리 피해를 입힙니다.',
+    description: 'SP를 소모하지 않고 즉시 사용할 수 있는 기습기. 적 1명에게 강한 물리 피해를 입힙니다. (제압 게이지 20 소모)',
     targetType: 'singleEnemy',
     energyGain: 20,
     spCost: 0,
+    suppressionDamage: 20,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 1.4, dmgType);
+      battle.applySuppression(targets[0], 20);
     },
   };
   const ultimate: SkillDef = {
     id: 'assassin_ultimate',
     name: '일격필살',
     type: 'ultimate',
-    description: '자신의 턴이 아니어도 즉시 발동. 적 1명에게 압도적인 단일 물리 피해를 입힙니다.',
+    description: '자신의 턴이 아니어도 즉시 발동. 적 1명에게 압도적인 단일 물리 피해를 입힙니다. (제압 게이지 35 소모)',
     targetType: 'singleEnemy',
     energyGain: 0,
+    suppressionDamage: 35,
     execute: ({ battle, actor, targets }) => {
       battle.dealDamage(actor, targets[0], 2.6, dmgType);
+      battle.applySuppression(targets[0], 35);
     },
   };
   return { normal, skill, ultimate };
@@ -456,6 +478,10 @@ function makeCharacter(
     maxEnergy: 100,
     alive: true,
     statuses: [],
+    suppressionGauge: MAX_SUPPRESSION_GAUGE,
+    maxSuppressionGauge: MAX_SUPPRESSION_GAUGE,
+    suppressed: false,
+    suppressedRemainingMs: 0,
     skills,
   };
 }

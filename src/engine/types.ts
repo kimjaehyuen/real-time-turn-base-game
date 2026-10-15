@@ -92,7 +92,7 @@ export interface Character {
   base: { hp: number; atk: number; def: number; spd: number; critRate: number; critDamage: number };
   /** 이 캐릭터가 가하는 모든 피해에 고정으로 붙는 속성 */
   element: Element;
-  /** 이 캐릭터가 받는 피해에 대한 내성 */
+  /** 이 캐릭터가 받는 피해에 대한 내성 (제압 중에는 전부 0으로 취급된다 — statusEffects.ts의 effectiveResistances() 참고) */
   resistances: Resistances;
   hp: number;
   maxHp: number;
@@ -101,6 +101,13 @@ export interface Character {
   maxEnergy: number;
   alive: boolean;
   statuses: StatusEffect[];
+  /** 제압 게이지 — 아군의 공격으로 소모되고, 이 캐릭터가 행동할 때마다 일정량 회복된다. 0이 되면 제압된다. */
+  suppressionGauge: number;
+  maxSuppressionGauge: number;
+  /** 제압되어 행동불능인 상태 (true인 동안은 게이지 충전/AI 행동/필살기 사용 모두 불가, 내성은 0으로 취급) */
+  suppressed: boolean;
+  /** 제압 상태가 끝나기까지 남은 실제 시간(ms). 대상 선택 중에는 다른 지속시간들과 함께 멈춘다. */
+  suppressedRemainingMs: number;
   skills: {
     normal: SkillDef;
     skill: SkillDef;
@@ -119,6 +126,9 @@ export interface SkillDef {
   spCost?: number;
   /** 이 행동을 사용하면 공유 SP를 이만큼 회복한다 (기본 0). 일반공격은 보통 1, 일부 캐릭터는 필살기로도 회복한다. */
   spGain?: number;
+  /** 이 공격이 적중한 대상의 제압 게이지를 이만큼 소모시킨다 (기본 0 = 제압에 관여하지 않음).
+   *  대상의 행동 게이지가 가득 차 있는 상태에서 적중하면 5배로 적용된다. */
+  suppressionDamage?: number;
   execute: (ctx: ExecuteContext) => void;
 }
 
@@ -134,6 +144,8 @@ export interface BattleApi {
   dealDamage(attacker: Character, target: Character, atkMultiplier: number, damageType: DamageType): number;
   heal(caster: Character, target: Character, amount: number): number;
   applyStatus(target: Character, template: StatusTemplate, source: Character): void;
+  /** 대상의 제압 게이지를 baseAmount만큼(대상이 행동 준비 상태면 5배) 소모시킨다. 0이 되면 제압이 발동한다. */
+  applySuppression(target: Character, baseAmount: number): void;
   livingAllies(of: Character): Character[];
   livingEnemies(of: Character): Character[];
   rng(): number;
